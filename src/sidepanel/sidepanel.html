@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Assistant</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>AI Assistant</h1>
+        <p id="modelLabel">Not configured</p>
+      </div>
+      <button id="openOptions" title="Settings" type="button">⚙</button>
+    </header>
+
+    <section class="quick-actions" aria-label="Page actions">
+      <button id="summarizePage" type="button">总结页面</button>
+      <button id="askPage" type="button">问当前页</button>
+      <button id="extractTodos" type="button">提取待办</button>
+      <button id="writingHelp" type="button">写作助手</button>
+    </section>
+
+    <main id="messages" class="messages" aria-live="polite"></main>
+
+    <form id="composer" class="composer">
+      <textarea id="promptInput" rows="3" placeholder="输入问题，或先点击上方页面工具"></textarea>
+      <div class="composer-actions">
+        <button id="clearChat" type="button">清空</button>
+        <button id="stopChat" type="button" disabled>停止</button>
+        <button id="sendPrompt" type="submit">发送</button>
+      </div>
+    </form>
+
+    <template id="messageTemplate">
+      <article class="message">
+        <div class="role"></div>
+        <div class="content"></div>
+      </article>
+    </template>
+
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

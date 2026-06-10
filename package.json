@@ -1,0 +1,21 @@
+{
+  "name": "custom-ai-browser-assistant",
+  "version": "0.1.0",
+  "description": "A BYOK Chrome AI assistant extension with OpenAI-compatible APIs.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test",
+    "lint": "node scripts/check-extension.js",
+    "build": "node scripts/build.js",
+    "verify": "npm run test && npm run lint && npm run build"
+  },
+  "keywords": [
+    "chrome-extension",
+    "ai-assistant",
+    "openai-compatible",
+    "byok"
+  ],
+  "license": "UNLICENSED",
+  "devDependencies": {}
+}

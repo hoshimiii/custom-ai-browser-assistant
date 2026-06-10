@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Assistant Settings</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main>
+      <h1>AI Assistant Settings</h1>
+      <form id="settingsForm">
+        <label>
+          <span>API Base URL</span>
+          <input id="baseUrl" name="baseUrl" placeholder="https://api.example.com/v1" autocomplete="off">
+        </label>
+        <label>
+          <span>API Key</span>
+          <input id="apiKey" name="apiKey" type="password" placeholder="sk-..." autocomplete="off">
+        </label>
+        <label>
+          <span>Model</span>
+          <input id="model" name="model" placeholder="your-model-name" autocomplete="off">
+        </label>
+        <label>
+          <span>Target Language</span>
+          <input id="targetLanguage" name="targetLanguage" placeholder="中文">
+        </label>
+        <label>
+          <span>Timeout Seconds</span>
+          <input id="timeoutSeconds" name="timeoutSeconds" type="number" min="10" max="600" step="10">
+        </label>
+        <label class="checkbox">
+          <input id="stream" name="stream" type="checkbox">
+          <span>Stream responses</span>
+        </label>
+        <label class="checkbox">
+          <input id="saveHistory" name="saveHistory" type="checkbox">
+          <span>Save conversation history locally</span>
+        </label>
+        <label>
+          <span>System Prompt</span>
+          <textarea id="systemPrompt" name="systemPrompt" rows="4"></textarea>
+        </label>
+        <div class="actions">
+          <button id="testConnection" type="button">Test</button>
+          <button type="submit">Save</button>
+        </div>
+      </form>
+      <p id="status" role="status"></p>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

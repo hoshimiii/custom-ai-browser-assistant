@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Custom AI Browser Assistant",
+  "short_name": "AI Assistant",
+  "version": "0.1.0",
+  "description": "BYOK AI assistant for chat, page summaries, selected text, search, and writing help.",
+  "action": {
+    "default_title": "Open AI Assistant"
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "options_page": "src/options/options.html",
+  "side_panel": {
+    "default_path": "src/sidepanel/sidepanel.html"
+  },
+  "permissions": [
+    "activeTab",
+    "contextMenus",
+    "scripting",
+    "sidePanel",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "https://*/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "src/content/contentScript.js"
+      ],
+      "css": [
+        "src/content/content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
