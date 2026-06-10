@@ -14,6 +14,7 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - Search result assistant panel for Google and Bing.
 - Writing helper for focused text fields and contenteditable editors.
 - Local conversation history in Chrome storage.
+- Keyboard shortcuts for opening the assistant and page summaries.
 
 ## Install Locally
 
@@ -29,6 +30,13 @@ npm run build
 For development without packaging, you can also load the project root.
 
 The generated `dist` directory is intentionally ignored by Git. Rebuild it locally before loading or publishing the extension.
+
+Default shortcuts:
+
+```text
+Ctrl+Shift+M: Open assistant
+Ctrl+Shift+S: Summarize current page
+```
 
 ## Configure
 
@@ -55,3 +63,5 @@ npm run build
 ```
 
 The extension intentionally uses plain JavaScript modules and no frontend build framework. This keeps the loaded unpacked extension close to the source and makes browser debugging straightforward.
+
+See `docs/IMPLEMENTATION_PLAN.md` for the feature matrix and roadmap.

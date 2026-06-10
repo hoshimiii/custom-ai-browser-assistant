@@ -46,6 +46,14 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   });
 });
 
+chrome.commands.onCommand.addListener(async (command, tab) => {
+  if (!tab?.windowId) return;
+  await chrome.sidePanel.open({ windowId: tab.windowId });
+  if (command === "summarize-page" && tab.id) {
+    await sendToSidePanel({ type: "PAGE_ACTION", action: "summarize-page", tabId: tab.id });
+  }
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleMessage(message, sender).then(sendResponse).catch((error) => {
     sendResponse({ ok: false, error: error.message });

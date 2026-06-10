@@ -30,6 +30,10 @@ for (const permission of ["activeTab", "storage", "sidePanel"]) {
   }
 }
 
+if (!manifest.commands?.["open-assistant"] || !manifest.commands?.["summarize-page"]) {
+  errors.push("Missing expected keyboard commands");
+}
+
 if (errors.length) {
   console.error(errors.join("\n"));
   process.exit(1);

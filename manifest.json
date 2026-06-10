@@ -22,6 +22,20 @@
     "sidePanel",
     "storage"
   ],
+  "commands": {
+    "open-assistant": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+M"
+      },
+      "description": "Open AI Assistant"
+    },
+    "summarize-page": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S"
+      },
+      "description": "Summarize current page"
+    }
+  },
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://localhost/*",
