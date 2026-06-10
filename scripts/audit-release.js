@@ -19,6 +19,7 @@ const requiredSourceFiles = [
   ".github/workflows/ci.yml",
   "docs/IMPLEMENTATION_PLAN.md",
   "docs/GITHUB_SETUP.md",
+  "docs/PRIVACY.md",
   "src/shared/apiClient.js",
   "src/shared/actions.js",
   "src/shared/backup.js",
