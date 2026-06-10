@@ -13,6 +13,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
 
 export const HISTORY_LIMIT = 50;
 
+export const SAVED_PAGE_STORAGE_LIMIT = 100;
+
 export const MESSAGE_LIMIT = 20;
 
 export const MAX_PAGE_CHARS = 24000;

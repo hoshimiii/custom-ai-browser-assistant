@@ -1,4 +1,5 @@
-import { DEFAULT_SETTINGS, HISTORY_LIMIT } from "./defaults.js";
+import { DEFAULT_SETTINGS, HISTORY_LIMIT, SAVED_PAGE_STORAGE_LIMIT } from "./defaults.js";
+import { upsertSavedPage } from "./library.js";
 
 export async function getSettings() {
   const saved = await chrome.storage.local.get("settings");
@@ -34,4 +35,23 @@ export async function saveConversation(conversation) {
 
 export async function clearHistory() {
   await chrome.storage.local.set({ history: [] });
+}
+
+export async function getSavedPages() {
+  const saved = await chrome.storage.local.get("savedPages");
+  return Array.isArray(saved.savedPages) ? saved.savedPages : [];
+}
+
+export async function savePageSnapshot(page) {
+  const savedPages = await getSavedPages();
+  const next = upsertSavedPage(savedPages, page).slice(0, SAVED_PAGE_STORAGE_LIMIT);
+  await chrome.storage.local.set({ savedPages: next });
+  return next[0];
+}
+
+export async function deleteSavedPage(pageId) {
+  const savedPages = await getSavedPages();
+  await chrome.storage.local.set({
+    savedPages: savedPages.filter((page) => page.id !== pageId)
+  });
 }

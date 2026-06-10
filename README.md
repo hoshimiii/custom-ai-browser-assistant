@@ -15,6 +15,7 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - Search result assistant panel for Google and Bing.
 - Writing helper for focused text fields and contenteditable editors.
 - Local conversation history in Chrome storage.
+- Local saved-page library with search and page-grounded Q&A.
 - Keyboard shortcuts for opening the assistant and page summaries.
 - Long page summarization with chunking and final synthesis.
 - Provider presets for OpenAI, OpenRouter, Ollama, LM Studio, and One API/New API style gateways.

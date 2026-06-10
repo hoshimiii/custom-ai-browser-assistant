@@ -14,7 +14,8 @@ This project aims to cover the most common Monica-like browser assistant workflo
 | Selected text actions | Implemented | Explain, translate, summarize, rewrite via floating toolbar and context menus. |
 | Search assistant | Implemented | Injects an ask button on Google/Bing search pages. |
 | Writing assistant | Implemented | Polishes focused editable fields and writes result back. |
-| Local history | Partial | Saves recent conversations; full history browser is planned. |
+| Local history | Partial | Saves recent conversations and shows a compact history list. |
+| Saved-page library | Implemented | Saves active pages, searches local snapshots, and asks questions grounded in saved content. |
 | Long page chunking | Implemented | Splits long pages, summarizes chunks, then synthesizes final summary. |
 | Provider presets | Implemented | OpenAI, OpenRouter, Ollama, LM Studio, One API/New API, custom. |
 | YouTube extraction | Partial | Detects video pages and extracts title, channel, description, visible transcript, and page text. |
@@ -67,5 +68,5 @@ chrome://extensions -> Developer mode -> Load unpacked -> E:\codes\custom-ai-bro
 1. Add richer history search, rename, pin, and delete actions.
 2. Add an explicit YouTube transcript opener/helper when transcript is not visible.
 3. Add PDF extraction through a local helper service or PDF.js-based reader.
-4. Add IndexedDB knowledge base and local semantic search.
+4. Upgrade the saved-page library from Chrome storage to IndexedDB and add local semantic search.
 5. Add optional provider-specific image generation tools.

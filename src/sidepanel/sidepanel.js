@@ -2,8 +2,9 @@ import { streamChat, requestChat } from "../shared/apiClient.js";
 import { findPageAction, PAGE_ACTIONS, WRITING_ACTIONS } from "../shared/actions.js";
 import { buildChunkSummaryPrompts, buildFinalSummaryPrompt, splitTextIntoChunks } from "../shared/chunking.js";
 import { DEFAULT_SETTINGS, MESSAGE_LIMIT } from "../shared/defaults.js";
+import { buildSavedPageQuestionPrompt, searchSavedPages } from "../shared/library.js";
 import { buildPageQuestionPrompt, buildPageSummaryPrompt, buildSearchPrompt, buildSelectionPrompt, buildWritingPrompt } from "../shared/prompts.js";
-import { getHistory, getSettings, saveConversation } from "../shared/storage.js";
+import { getHistory, getSavedPages, getSettings, saveConversation, savePageSnapshot } from "../shared/storage.js";
 
 const state = {
   settings: DEFAULT_SETTINGS,
@@ -25,6 +26,9 @@ const elements = {
   askPage: document.getElementById("askPage"),
   refreshHistory: document.getElementById("refreshHistory"),
   historyList: document.getElementById("historyList"),
+  saveCurrentPage: document.getElementById("saveCurrentPage"),
+  librarySearch: document.getElementById("librarySearch"),
+  libraryList: document.getElementById("libraryList"),
   clearChat: document.getElementById("clearChat"),
   stopChat: document.getElementById("stopChat")
 };
@@ -37,6 +41,7 @@ async function init() {
   renderActionButtons();
   wireEvents();
   await renderHistory();
+  await renderLibrary();
   await consumePendingAction();
   addMessage("assistant", "配置 API 后即可开始使用。可以直接聊天，也可以总结当前网页或处理选中文本。");
 }
@@ -55,6 +60,8 @@ function wireEvents() {
     if (question) await runPageQuestion(question);
   });
   elements.refreshHistory.addEventListener("click", renderHistory);
+  elements.saveCurrentPage.addEventListener("click", saveCurrentPageToLibrary);
+  elements.librarySearch.addEventListener("input", () => renderLibrary(elements.librarySearch.value));
   elements.clearChat.addEventListener("click", () => {
     state.messages = [];
     elements.messages.textContent = "";
@@ -124,6 +131,14 @@ async function runSearchAction(query) {
   if (!query) return;
   addMessage("user", `搜索辅助：${query}`);
   await askModel([{ role: "user", content: buildSearchPrompt(query) }]);
+}
+
+async function saveCurrentPageToLibrary() {
+  const page = await extractCurrentPage();
+  if (!page) return;
+  const saved = await savePageSnapshot(page);
+  addMessage("assistant", `已保存到资料库：${saved.title}`);
+  await renderLibrary();
 }
 
 async function runWritingHelp(action) {
@@ -298,5 +313,25 @@ async function renderHistory() {
       }
     });
     elements.historyList.append(button);
+  }
+}
+
+async function renderLibrary(query = "") {
+  const pages = await getSavedPages();
+  const matches = searchSavedPages(pages, query, 8);
+  elements.libraryList.textContent = "";
+  for (const page of matches) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "history-item";
+    button.textContent = `${page.type || "page"} · ${page.title || "Untitled"}`;
+    button.title = page.url || page.title || "";
+    button.addEventListener("click", async () => {
+      const question = elements.promptInput.value.trim() || window.prompt("基于这条保存资料提问");
+      if (!question) return;
+      addMessage("user", `资料库问答：${question}`);
+      await askModel([{ role: "user", content: buildSavedPageQuestionPrompt(page, question) }]);
+    });
+    elements.libraryList.append(button);
   }
 }
