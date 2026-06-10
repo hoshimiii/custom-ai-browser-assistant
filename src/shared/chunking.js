@@ -1,4 +1,5 @@
 import { normalizeWhitespace } from "./text.js";
+import { buildPageContext } from "./pageTypes.js";
 
 export function splitTextIntoChunks(text, maxChars = 12000) {
   const normalized = normalizeWhitespace(text);
@@ -36,7 +37,7 @@ export function splitTextIntoChunks(text, maxChars = 12000) {
 }
 
 export function buildChunkSummaryPrompts(page, maxChars = 12000) {
-  const chunks = splitTextIntoChunks(page.text || "", maxChars);
+  const chunks = splitTextIntoChunks(buildPageContext(page), maxChars);
   return chunks.map((chunk, index) => ({
     index,
     total: chunks.length,

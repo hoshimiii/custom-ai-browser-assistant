@@ -17,7 +17,8 @@ This project aims to cover the most common Monica-like browser assistant workflo
 | Local history | Partial | Saves recent conversations; full history browser is planned. |
 | Long page chunking | Implemented | Splits long pages, summarizes chunks, then synthesizes final summary. |
 | Provider presets | Implemented | OpenAI, OpenRouter, Ollama, LM Studio, One API/New API, custom. |
-| PDF/YouTube | Planned | Needs dedicated extractors and fallback UX. |
+| YouTube extraction | Partial | Detects video pages and extracts title, channel, description, visible transcript, and page text. |
+| PDF detection | Partial | Detects PDF pages and provides a graceful fallback until a dedicated parser is added. |
 | Knowledge base | Planned | IndexedDB storage and retrieval layer. |
 | Image/video generation | Out of scope for MVP | Can be added through provider-specific tools later. |
 
@@ -64,7 +65,7 @@ chrome://extensions -> Developer mode -> Load unpacked -> E:\codes\custom-ai-bro
 ## Next Iterations
 
 1. Add richer history search, rename, pin, and delete actions.
-2. Add YouTube transcript extraction.
+2. Add an explicit YouTube transcript opener/helper when transcript is not visible.
 3. Add PDF extraction through a local helper service or PDF.js-based reader.
 4. Add IndexedDB knowledge base and local semantic search.
 5. Add optional provider-specific image generation tools.

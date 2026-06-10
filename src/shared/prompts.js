@@ -1,4 +1,5 @@
 import { preparePageText, prepareSelectionText } from "./text.js";
+import { buildPageContext } from "./pageTypes.js";
 
 export function buildPageSummaryPrompt(page) {
   return `请总结当前网页，输出：
@@ -9,8 +10,8 @@ export function buildPageSummaryPrompt(page) {
 
 网页标题：${page.title || "无标题"}
 网页 URL：${page.url || "未知"}
-正文：
-${preparePageText(page.text || "")}`;
+内容：
+${preparePageText(buildPageContext(page))}`;
 }
 
 export function buildPageQuestionPrompt(page, question) {
@@ -18,8 +19,8 @@ export function buildPageQuestionPrompt(page, question) {
 
 网页标题：${page.title || "无标题"}
 网页 URL：${page.url || "未知"}
-网页正文：
-${preparePageText(page.text || "")}
+网页内容：
+${preparePageText(buildPageContext(page))}
 
 用户问题：
 ${question}`;

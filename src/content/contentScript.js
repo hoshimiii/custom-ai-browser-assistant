@@ -28,11 +28,82 @@
   maybeInjectSearchPanel();
 
   function extractPage() {
+    const type = detectPageType(location.href, document.contentType);
+    if (type === "youtube") {
+      return extractYouTubePage();
+    }
     return {
+      type,
       title: document.title,
       url: location.href,
       text: collectReadableText()
     };
+  }
+
+  function detectPageType(url, mimeType = "") {
+    if (String(mimeType || "").toLowerCase().includes("pdf")) return "pdf";
+    try {
+      const current = new URL(url);
+      const host = current.hostname.toLowerCase();
+      const path = current.pathname.toLowerCase();
+      if ((host.includes("youtube.com") && path === "/watch") || host === "youtu.be") return "youtube";
+      if (path.endsWith(".pdf")) return "pdf";
+    } catch {
+      return "webpage";
+    }
+    return "webpage";
+  }
+
+  function extractYouTubePage() {
+    return {
+      type: "youtube",
+      title: readText("h1.ytd-watch-metadata, h1.title, meta[property='og:title']", "content") || document.title,
+      url: location.href,
+      author: readText("#owner #channel-name a, ytd-video-owner-renderer a.yt-simple-endpoint"),
+      description: readYouTubeDescription(),
+      transcript: readYouTubeTranscript(),
+      text: collectReadableText()
+    };
+  }
+
+  function readText(selector, attribute = "") {
+    const node = document.querySelector(selector);
+    if (!node) return "";
+    if (attribute) return node.getAttribute(attribute) || "";
+    return node.innerText?.trim() || node.textContent?.trim() || "";
+  }
+
+  function readYouTubeDescription() {
+    const selectors = [
+      "ytd-text-inline-expander",
+      "#description-inline-expander",
+      "#description",
+      "meta[name='description']"
+    ];
+    for (const selector of selectors) {
+      const node = document.querySelector(selector);
+      if (!node) continue;
+      const text = selector.startsWith("meta") ? node.getAttribute("content") : node.innerText || node.textContent;
+      if (text?.trim()) return text.trim();
+    }
+    return "";
+  }
+
+  function readYouTubeTranscript() {
+    const selectors = [
+      "ytd-transcript-segment-renderer",
+      "yt-formatted-string.segment-text",
+      ".ytd-transcript-segment-renderer"
+    ];
+    const segments = [];
+    for (const selector of selectors) {
+      for (const node of document.querySelectorAll(selector)) {
+        const text = node.innerText || node.textContent || "";
+        if (text.trim()) segments.push(text.trim());
+      }
+      if (segments.length) break;
+    }
+    return [...new Set(segments)].join("\n");
   }
 
   function collectReadableText() {
