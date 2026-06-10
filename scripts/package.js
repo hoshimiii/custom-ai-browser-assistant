@@ -17,7 +17,7 @@ fs.rmSync(zipPath, { force: true });
 
 const command = [
   "Compress-Archive",
-  "-LiteralPath",
+  "-Path",
   path.join(dist, "*"),
   "-DestinationPath",
   zipPath,
@@ -31,6 +31,11 @@ const result = spawnSync("powershell", ["-NoProfile", "-Command", command], {
 
 if (result.status !== 0) {
   process.exit(result.status || 1);
+}
+
+if (!fs.existsSync(zipPath)) {
+  console.error(`Packaging failed: ${zipPath} was not created.`);
+  process.exit(1);
 }
 
 console.log(`Packaged extension at ${zipPath}`);
