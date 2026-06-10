@@ -42,6 +42,10 @@ export function searchSavedPages(pages, query, limit = 10) {
     .map((item) => item.page);
 }
 
+export function removeSavedPageById(pages, pageId) {
+  return pages.filter((page) => page.id !== pageId);
+}
+
 export function buildSavedPageQuestionPrompt(page, question) {
   return `请只基于下面保存的资料回答用户问题。如果资料中没有答案，请明确说明无法从资料确认。
 

@@ -4,7 +4,7 @@ import { buildChunkSummaryPrompts, buildFinalSummaryPrompt, splitTextIntoChunks 
 import { DEFAULT_SETTINGS, MESSAGE_LIMIT } from "../shared/defaults.js";
 import { buildSavedPageQuestionPrompt, searchSavedPages } from "../shared/library.js";
 import { buildPageQuestionPrompt, buildPageSummaryPrompt, buildSearchPrompt, buildSelectionPrompt, buildWritingPrompt } from "../shared/prompts.js";
-import { getHistory, getSavedPages, getSettings, saveConversation, savePageSnapshot } from "../shared/storage.js";
+import { clearHistory, deleteSavedPage, getHistory, getSavedPages, getSettings, saveConversation, savePageSnapshot } from "../shared/storage.js";
 import { buildImageQuestionMessage } from "../shared/vision.js";
 
 const state = {
@@ -27,6 +27,7 @@ const elements = {
   askScreenshot: document.getElementById("askScreenshot"),
   askPage: document.getElementById("askPage"),
   refreshHistory: document.getElementById("refreshHistory"),
+  clearStoredHistory: document.getElementById("clearStoredHistory"),
   historyList: document.getElementById("historyList"),
   saveCurrentPage: document.getElementById("saveCurrentPage"),
   librarySearch: document.getElementById("librarySearch"),
@@ -63,6 +64,7 @@ function wireEvents() {
   });
   elements.askScreenshot.addEventListener("click", runScreenshotQuestion);
   elements.refreshHistory.addEventListener("click", renderHistory);
+  elements.clearStoredHistory.addEventListener("click", clearStoredHistory);
   elements.saveCurrentPage.addEventListener("click", saveCurrentPageToLibrary);
   elements.librarySearch.addEventListener("input", () => renderLibrary(elements.librarySearch.value));
   elements.clearChat.addEventListener("click", () => {
@@ -336,11 +338,20 @@ async function renderHistory() {
   }
 }
 
+async function clearStoredHistory() {
+  if (!window.confirm("确定清空本地会话历史吗？")) return;
+  await clearHistory();
+  await renderHistory();
+  addMessage("assistant", "本地会话历史已清空。");
+}
+
 async function renderLibrary(query = "") {
   const pages = await getSavedPages();
   const matches = searchSavedPages(pages, query, 8);
   elements.libraryList.textContent = "";
   for (const page of matches) {
+    const row = document.createElement("div");
+    row.className = "library-row";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "history-item";
@@ -352,6 +363,15 @@ async function renderLibrary(query = "") {
       addMessage("user", `资料库问答：${question}`);
       await askModel([{ role: "user", content: buildSavedPageQuestionPrompt(page, question) }]);
     });
-    elements.libraryList.append(button);
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "library-delete";
+    deleteButton.textContent = "删除";
+    deleteButton.addEventListener("click", async () => {
+      await deleteSavedPage(page.id);
+      await renderLibrary(elements.librarySearch.value);
+    });
+    row.append(button, deleteButton);
+    elements.libraryList.append(row);
   }
 }

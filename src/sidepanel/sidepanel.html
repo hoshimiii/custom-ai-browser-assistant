@@ -36,7 +36,10 @@
     <section class="history-panel" aria-label="Conversation history">
       <div class="history-header">
         <strong>历史</strong>
-        <button id="refreshHistory" type="button">刷新</button>
+        <div class="inline-actions">
+          <button id="refreshHistory" type="button">刷新</button>
+          <button id="clearStoredHistory" type="button">清空记录</button>
+        </div>
       </div>
       <div id="historyList" class="history-list"></div>
     </section>

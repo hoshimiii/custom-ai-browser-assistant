@@ -16,6 +16,7 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - Writing helper for focused text fields and contenteditable editors.
 - Local conversation history in Chrome storage.
 - Local saved-page library with search and page-grounded Q&A.
+- Saved-page deletion and stored conversation history cleanup.
 - JSON backup and restore for settings, conversation history, and saved pages.
 - Keyboard shortcuts for opening the assistant and page summaries.
 - Long page summarization with chunking and final synthesis.

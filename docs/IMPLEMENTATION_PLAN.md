@@ -14,8 +14,8 @@ This project aims to cover the most common Monica-like browser assistant workflo
 | Selected text actions | Implemented | Explain, translate, summarize, rewrite via floating toolbar and context menus. |
 | Search assistant | Implemented | Injects an ask button on Google/Bing search pages. |
 | Writing assistant | Implemented | Polishes focused editable fields and writes result back. |
-| Local history | Partial | Saves recent conversations and shows a compact history list. |
-| Saved-page library | Implemented | Saves active pages, searches local snapshots, and asks questions grounded in saved content. |
+| Local history | Partial | Saves recent conversations, shows a compact history list, and supports clearing stored history. |
+| Saved-page library | Implemented | Saves active pages, searches local snapshots, asks questions grounded in saved content, and deletes saved pages. |
 | Backup/restore | Implemented | Options page exports/imports settings, history, and saved pages as JSON. |
 | Screenshot Q&A | Implemented | Captures the visible tab and sends an OpenAI-compatible image message to vision-capable models. |
 | Long page chunking | Implemented | Splits long pages, summarizes chunks, then synthesizes final summary. |

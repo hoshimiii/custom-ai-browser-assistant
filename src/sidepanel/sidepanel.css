@@ -100,6 +100,11 @@ button:disabled {
   font-size: 12px;
 }
 
+.inline-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .history-list {
   display: grid;
   gap: 6px;
@@ -112,6 +117,17 @@ button:disabled {
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.library-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  width: 100%;
+}
+
+.library-delete {
+  min-width: 42px;
 }
 
 .library-search {

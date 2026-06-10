@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildSavedPageQuestionPrompt, normalizeSavedPage, searchSavedPages, upsertSavedPage } from "../src/shared/library.js";
+import { buildSavedPageQuestionPrompt, normalizeSavedPage, removeSavedPageById, searchSavedPages, upsertSavedPage } from "../src/shared/library.js";
 
 test("normalizeSavedPage assigns stable id and page type", () => {
   const page = normalizeSavedPage({ title: " Demo ", url: "https://youtu.be/abc", text: " hello " }, 100);
@@ -30,4 +30,9 @@ test("buildSavedPageQuestionPrompt includes saved context and question", () => {
   const prompt = buildSavedPageQuestionPrompt({ title: "T", url: "u", text: "body" }, "why?");
   assert.match(prompt, /保存的资料/);
   assert.match(prompt, /why\?/);
+});
+
+test("removeSavedPageById removes the selected page only", () => {
+  const pages = [{ id: "a" }, { id: "b" }];
+  assert.deepEqual(removeSavedPageById(pages, "a"), [{ id: "b" }]);
 });
