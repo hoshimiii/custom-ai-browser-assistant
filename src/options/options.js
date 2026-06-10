@@ -1,11 +1,14 @@
 import { requestChat } from "../shared/apiClient.js";
 import { DEFAULT_SETTINGS } from "../shared/defaults.js";
 import { applyProviderPreset, PROVIDER_PRESETS } from "../shared/providers.js";
-import { getSettings, saveSettings } from "../shared/storage.js";
+import { exportBackup, getSettings, importBackup, saveSettings } from "../shared/storage.js";
 
 const form = document.getElementById("settingsForm");
 const status = document.getElementById("status");
 const testConnection = document.getElementById("testConnection");
+const exportBackupButton = document.getElementById("exportBackup");
+const importBackupInput = document.getElementById("importBackup");
+const replaceOnImport = document.getElementById("replaceOnImport");
 
 init();
 
@@ -34,6 +37,8 @@ async function init() {
       showStatus(`连接失败：${error.message}`);
     }
   });
+  exportBackupButton.addEventListener("click", handleExportBackup);
+  importBackupInput.addEventListener("change", handleImportBackup);
 }
 
 function fillForm(settings) {
@@ -75,4 +80,32 @@ function readForm() {
 
 function showStatus(message) {
   status.textContent = message;
+}
+
+async function handleExportBackup() {
+  const payload = await exportBackup();
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `ai-assistant-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  showStatus("已导出备份。");
+}
+
+async function handleImportBackup() {
+  const file = importBackupInput.files?.[0];
+  if (!file) return;
+  try {
+    const raw = await file.text();
+    const mode = replaceOnImport.checked ? "replace" : "merge";
+    await importBackup(JSON.parse(raw), mode);
+    fillForm(await getSettings());
+    showStatus("导入完成。");
+  } catch (error) {
+    showStatus(`导入失败：${error.message}`);
+  } finally {
+    importBackupInput.value = "";
+  }
 }

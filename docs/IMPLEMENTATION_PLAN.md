@@ -16,6 +16,7 @@ This project aims to cover the most common Monica-like browser assistant workflo
 | Writing assistant | Implemented | Polishes focused editable fields and writes result back. |
 | Local history | Partial | Saves recent conversations and shows a compact history list. |
 | Saved-page library | Implemented | Saves active pages, searches local snapshots, and asks questions grounded in saved content. |
+| Backup/restore | Implemented | Options page exports/imports settings, history, and saved pages as JSON. |
 | Long page chunking | Implemented | Splits long pages, summarizes chunks, then synthesizes final summary. |
 | Provider presets | Implemented | OpenAI, OpenRouter, Ollama, LM Studio, One API/New API, custom. |
 | YouTube extraction | Partial | Detects video pages and extracts title, channel, description, visible transcript, and page text. |

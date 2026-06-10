@@ -19,6 +19,11 @@ h1 {
   margin: 0 0 24px;
 }
 
+h2 {
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+
 form {
   display: grid;
   gap: 16px;
@@ -70,6 +75,34 @@ button[type="submit"] {
   background: #0969da;
   border-color: #0969da;
   color: #ffffff;
+}
+
+.backup-panel {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid #d8dee4;
+}
+
+.backup-panel p {
+  color: #57606a;
+  font-size: 13px;
+}
+
+.file-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 400;
+  padding: 8px 12px;
+}
+
+.file-button input {
+  display: none;
 }
 
 #status {

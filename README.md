@@ -16,6 +16,7 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - Writing helper for focused text fields and contenteditable editors.
 - Local conversation history in Chrome storage.
 - Local saved-page library with search and page-grounded Q&A.
+- JSON backup and restore for settings, conversation history, and saved pages.
 - Keyboard shortcuts for opening the assistant and page summaries.
 - Long page summarization with chunking and final synthesis.
 - Provider presets for OpenAI, OpenRouter, Ollama, LM Studio, and One API/New API style gateways.
@@ -44,6 +45,8 @@ npm run package
 ```
 
 The zip is written to `releases/custom-ai-browser-assistant.zip`.
+
+Backup data from the options page before moving browsers or machines. The JSON export includes settings, history, and saved pages.
 
 Default shortcuts:
 

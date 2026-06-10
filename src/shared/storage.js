@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, HISTORY_LIMIT, SAVED_PAGE_STORAGE_LIMIT } from "./defaults.js";
+import { createBackupPayload, mergeBackupPayload } from "./backup.js";
 import { upsertSavedPage } from "./library.js";
 
 export async function getSettings() {
@@ -54,4 +55,24 @@ export async function deleteSavedPage(pageId) {
   await chrome.storage.local.set({
     savedPages: savedPages.filter((page) => page.id !== pageId)
   });
+}
+
+export async function exportBackup() {
+  const [settings, history, savedPages] = await Promise.all([
+    getSettings(),
+    getHistory(),
+    getSavedPages()
+  ]);
+  return createBackupPayload({ settings, history, savedPages });
+}
+
+export async function importBackup(payload, mode = "merge") {
+  const current = await exportBackup();
+  const next = mergeBackupPayload(current, payload, mode);
+  await chrome.storage.local.set({
+    settings: next.settings,
+    history: next.history,
+    savedPages: next.savedPages
+  });
+  return next;
 }

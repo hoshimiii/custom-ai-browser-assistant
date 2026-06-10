@@ -55,6 +55,21 @@
           <button type="submit">Save</button>
         </div>
       </form>
+      <section class="backup-panel">
+        <h2>Backup</h2>
+        <p>Export or import local settings, conversation history, and saved pages.</p>
+        <div class="actions">
+          <button id="exportBackup" type="button">Export JSON</button>
+          <label class="file-button">
+            Import JSON
+            <input id="importBackup" type="file" accept="application/json">
+          </label>
+          <label class="checkbox">
+            <input id="replaceOnImport" type="checkbox">
+            <span>Replace existing data</span>
+          </label>
+        </div>
+      </section>
       <p id="status" role="status"></p>
     </main>
     <script type="module" src="options.js"></script>

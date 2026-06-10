@@ -15,6 +15,7 @@ const required = [
   "src/sidepanel/sidepanel.html",
   "src/options/options.html",
   "src/shared/actions.js",
+  "src/shared/backup.js",
   "src/shared/chunking.js",
   "src/shared/library.js",
   "src/shared/pageTypes.js",

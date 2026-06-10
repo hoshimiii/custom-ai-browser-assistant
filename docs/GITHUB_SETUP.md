@@ -7,6 +7,8 @@ cd E:\codes\custom-ai-browser-assistant
 gh repo create custom-ai-browser-assistant --private --source . --remote origin --push
 ```
 
+The repository includes `.github/workflows/ci.yml`; GitHub Actions will run `npm run verify` on push and pull requests.
+
 If GitHub CLI is not installed:
 
 1. Create a private repository named `custom-ai-browser-assistant` on GitHub.
