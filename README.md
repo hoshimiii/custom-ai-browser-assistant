@@ -22,6 +22,7 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - Provider presets for OpenAI, OpenRouter, Ollama, LM Studio, and One API/New API style gateways.
 - YouTube-aware extraction for title, channel, description, visible transcript, and page text.
 - PDF page detection with graceful fallback text handling.
+- Screenshot Q&A for vision-capable OpenAI-compatible models.
 
 ## Install Locally
 

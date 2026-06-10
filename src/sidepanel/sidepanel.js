@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS, MESSAGE_LIMIT } from "../shared/defaults.js";
 import { buildSavedPageQuestionPrompt, searchSavedPages } from "../shared/library.js";
 import { buildPageQuestionPrompt, buildPageSummaryPrompt, buildSearchPrompt, buildSelectionPrompt, buildWritingPrompt } from "../shared/prompts.js";
 import { getHistory, getSavedPages, getSettings, saveConversation, savePageSnapshot } from "../shared/storage.js";
+import { buildImageQuestionMessage } from "../shared/vision.js";
 
 const state = {
   settings: DEFAULT_SETTINGS,
@@ -23,6 +24,7 @@ const elements = {
   openOptions: document.getElementById("openOptions"),
   pageActions: document.getElementById("pageActions"),
   writingActions: document.getElementById("writingActions"),
+  askScreenshot: document.getElementById("askScreenshot"),
   askPage: document.getElementById("askPage"),
   refreshHistory: document.getElementById("refreshHistory"),
   historyList: document.getElementById("historyList"),
@@ -59,6 +61,7 @@ function wireEvents() {
     const question = elements.promptInput.value.trim() || window.prompt("请输入关于当前网页的问题");
     if (question) await runPageQuestion(question);
   });
+  elements.askScreenshot.addEventListener("click", runScreenshotQuestion);
   elements.refreshHistory.addEventListener("click", renderHistory);
   elements.saveCurrentPage.addEventListener("click", saveCurrentPageToLibrary);
   elements.librarySearch.addEventListener("input", () => renderLibrary(elements.librarySearch.value));
@@ -131,6 +134,23 @@ async function runSearchAction(query) {
   if (!query) return;
   addMessage("user", `搜索辅助：${query}`);
   await askModel([{ role: "user", content: buildSearchPrompt(query) }]);
+}
+
+async function runScreenshotQuestion() {
+  const question = elements.promptInput.value.trim() || window.prompt("请输入关于当前截图的问题，可留空使用默认分析") || "";
+  const tab = await getActiveTab();
+  if (!tab?.windowId) {
+    addMessage("error", "没有可截图的当前窗口。");
+    return;
+  }
+  try {
+    const imageDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+    const message = buildImageQuestionMessage(imageDataUrl, question);
+    addMessage("user", question ? `截图问答：${question}` : "分析当前截图");
+    await askModel([message]);
+  } catch (error) {
+    addMessage("error", `截图失败：${error.message}`);
+  }
 }
 
 async function saveCurrentPageToLibrary() {

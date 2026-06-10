@@ -30,7 +30,8 @@
     "contextMenus",
     "scripting",
     "sidePanel",
-    "storage"
+    "storage",
+    "tabs"
   ],
   "commands": {
     "open-assistant": {
