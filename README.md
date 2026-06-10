@@ -79,6 +79,7 @@ POST /chat/completions
 ```powershell
 npm test
 npm run lint
+npm run audit:imports
 npm run build
 npm run package
 npm run audit:release

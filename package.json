@@ -7,10 +7,11 @@
   "scripts": {
     "test": "node --test",
     "lint": "node scripts/check-extension.js",
+    "audit:imports": "node scripts/audit-imports.js",
     "build": "node scripts/build.js",
     "package": "node scripts/package.js",
     "audit:release": "node scripts/audit-release.js",
-    "verify": "npm run test && npm run lint && npm run build && npm run package && npm run audit:release"
+    "verify": "npm run test && npm run lint && npm run audit:imports && npm run build && npm run package && npm run audit:release"
   },
   "keywords": [
     "chrome-extension",
