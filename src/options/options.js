@@ -9,6 +9,7 @@ const testConnection = document.getElementById("testConnection");
 const exportBackupButton = document.getElementById("exportBackup");
 const importBackupInput = document.getElementById("importBackup");
 const replaceOnImport = document.getElementById("replaceOnImport");
+const includeApiKeyInBackup = document.getElementById("includeApiKeyInBackup");
 
 init();
 
@@ -83,7 +84,10 @@ function showStatus(message) {
 }
 
 async function handleExportBackup() {
-  const payload = await exportBackup();
+  if (includeApiKeyInBackup.checked && !window.confirm("备份将包含 API Key。请只保存在可信位置。继续导出吗？")) {
+    return;
+  }
+  const payload = await exportBackup({ includeApiKey: includeApiKeyInBackup.checked });
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

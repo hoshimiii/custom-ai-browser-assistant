@@ -57,13 +57,13 @@ export async function deleteSavedPage(pageId) {
   });
 }
 
-export async function exportBackup() {
+export async function exportBackup(options = {}) {
   const [settings, history, savedPages] = await Promise.all([
     getSettings(),
     getHistory(),
     getSavedPages()
   ]);
-  return createBackupPayload({ settings, history, savedPages });
+  return createBackupPayload({ settings, history, savedPages }, undefined, options);
 }
 
 export async function importBackup(payload, mode = "merge") {

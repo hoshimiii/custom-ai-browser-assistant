@@ -60,6 +60,10 @@
         <p>Export or import local settings, conversation history, and saved pages.</p>
         <div class="actions">
           <button id="exportBackup" type="button">Export JSON</button>
+          <label class="checkbox">
+            <input id="includeApiKeyInBackup" type="checkbox">
+            <span>Include API Key</span>
+          </label>
           <label class="file-button">
             Import JSON
             <input id="importBackup" type="file" accept="application/json">

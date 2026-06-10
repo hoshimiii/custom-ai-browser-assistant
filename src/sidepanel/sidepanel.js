@@ -12,7 +12,8 @@ const state = {
   messages: [],
   currentTabId: null,
   running: false,
-  abort: null
+  abort: null,
+  busyNoticeShown: false
 };
 
 const elements = {
@@ -98,6 +99,7 @@ async function consumePendingAction() {
 }
 
 async function sendUserPrompt(text) {
+  if (!ensureIdle()) return;
   addMessage("user", text);
   await askModel([{ role: "user", content: text }]);
 }
@@ -107,6 +109,7 @@ async function runPageSummary() {
 }
 
 async function runPageAction(actionId) {
+  if (!ensureIdle()) return;
   const page = await extractCurrentPage();
   if (!page) return;
   const action = findPageAction(actionId);
@@ -119,6 +122,7 @@ async function runPageAction(actionId) {
 }
 
 async function runPageQuestion(question) {
+  if (!ensureIdle()) return;
   const page = await extractCurrentPage();
   if (!page) return;
   addMessage("user", question);
@@ -127,6 +131,7 @@ async function runPageQuestion(question) {
 
 async function runSelectionAction(action, selectionText) {
   if (!selectionText) return;
+  if (!ensureIdle()) return;
   const prompt = buildSelectionPrompt(action, selectionText, state.settings);
   addMessage("user", `处理选中文本：${action}`);
   await askModel([{ role: "user", content: prompt }]);
@@ -134,11 +139,13 @@ async function runSelectionAction(action, selectionText) {
 
 async function runSearchAction(query) {
   if (!query) return;
+  if (!ensureIdle()) return;
   addMessage("user", `搜索辅助：${query}`);
   await askModel([{ role: "user", content: buildSearchPrompt(query) }]);
 }
 
 async function runScreenshotQuestion() {
+  if (!ensureIdle()) return;
   const question = elements.promptInput.value.trim() || window.prompt("请输入关于当前截图的问题，可留空使用默认分析") || "";
   const tab = await getActiveTab();
   if (!tab?.windowId) {
@@ -156,6 +163,7 @@ async function runScreenshotQuestion() {
 }
 
 async function saveCurrentPageToLibrary() {
+  if (!ensureIdle()) return;
   const page = await extractCurrentPage();
   if (!page) return;
   const saved = await savePageSnapshot(page);
@@ -164,6 +172,7 @@ async function saveCurrentPageToLibrary() {
 }
 
 async function runWritingHelp(action) {
+  if (!ensureIdle()) return;
   const tab = await getActiveTab();
   if (!tab?.id) return;
   const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_ACTIVE_EDITABLE" }).catch(() => null);
@@ -199,11 +208,16 @@ function renderActionButtons() {
 }
 
 async function askModel(newMessages) {
-  if (state.running) return;
-  state.running = true;
-  elements.stopChat.disabled = false;
+  if (!beginTask()) return;
   const abortController = new AbortController();
   state.abort = () => abortController.abort();
+
+  await askModelDuringTask(newMessages, abortController.signal);
+  endTask();
+}
+
+async function askModelDuringTask(newMessages, signal) {
+  state.running = true;
 
   const assistantNode = addMessage("assistant", "");
   let fullText = "";
@@ -219,9 +233,9 @@ async function askModel(newMessages) {
         onDone: (text) => {
           fullText = text;
         }
-      }, { signal: abortController.signal });
+      }, { signal });
     } else {
-      fullText = await requestChat(state.settings, messages);
+      fullText = await requestChat(state.settings, messages, { signal });
       assistantNode.querySelector(".content").textContent = fullText;
     }
     if (!fullText) {
@@ -235,9 +249,7 @@ async function askModel(newMessages) {
     assistantNode.querySelector(".role").textContent = "ERROR";
     assistantNode.querySelector(".content").textContent = error.message;
   } finally {
-    state.running = false;
-    state.abort = null;
-    elements.stopChat.disabled = true;
+    // Task lifecycle is controlled by the caller so chunked workflows can reuse it.
   }
 }
 
@@ -248,15 +260,29 @@ async function summarizePage(page) {
     return;
   }
 
-  addMessage("assistant", `页面较长，正在分 ${chunks.length} 段摘要后汇总。`);
-  const chunkPrompts = buildChunkSummaryPrompts(page, state.settings.pageChunkChars);
-  const partials = [];
-  for (const chunk of chunkPrompts) {
-    const partial = await requestChat(state.settings, buildMessages([{ role: "user", content: chunk.prompt }]));
-    partials.push(partial);
-    addMessage("assistant", `分块 ${chunk.index + 1}/${chunk.total} 摘要完成。`);
+  if (!beginTask()) return;
+  const abortController = new AbortController();
+  state.abort = () => abortController.abort();
+  try {
+    addMessage("assistant", `页面较长，正在分 ${chunks.length} 段摘要后汇总。`);
+    const chunkPrompts = buildChunkSummaryPrompts(page, state.settings.pageChunkChars);
+    const partials = [];
+    for (const chunk of chunkPrompts) {
+      if (abortController.signal.aborted) {
+        throw new Error("已停止");
+      }
+      const partial = await requestChat(state.settings, buildMessages([{ role: "user", content: chunk.prompt }]), {
+        signal: abortController.signal
+      });
+      partials.push(partial);
+      addMessage("assistant", `分块 ${chunk.index + 1}/${chunk.total} 摘要完成。`);
+    }
+    await askModelDuringTask([{ role: "user", content: buildFinalSummaryPrompt(page, partials) }], abortController.signal);
+  } catch (error) {
+    addMessage("error", `长页面摘要失败：${error.message}`);
+  } finally {
+    endTask();
   }
-  await askModel([{ role: "user", content: buildFinalSummaryPrompt(page, partials) }]);
 }
 
 function buildMessages(newMessages) {
@@ -317,6 +343,41 @@ function scrollToBottom() {
 
 function updateModelLabel() {
   elements.modelLabel.textContent = state.settings.model ? `Model: ${state.settings.model}` : "Not configured";
+}
+
+function ensureIdle() {
+  if (!state.running) return true;
+  if (!state.busyNoticeShown) {
+    addMessage("error", "已有任务正在运行，请等待完成或点击停止。");
+    state.busyNoticeShown = true;
+  }
+  return false;
+}
+
+function beginTask() {
+  if (!ensureIdle()) return false;
+  state.running = true;
+  state.busyNoticeShown = false;
+  elements.stopChat.disabled = false;
+  setControlsDisabled(true);
+  return true;
+}
+
+function endTask() {
+  state.running = false;
+  state.abort = null;
+  state.busyNoticeShown = false;
+  elements.stopChat.disabled = true;
+  setControlsDisabled(false);
+}
+
+function setControlsDisabled(disabled) {
+  for (const button of document.querySelectorAll("button")) {
+    if (button === elements.stopChat || button === elements.openOptions) continue;
+    button.disabled = disabled;
+  }
+  elements.promptInput.disabled = disabled;
+  elements.librarySearch.disabled = disabled;
 }
 
 async function renderHistory() {

@@ -30,6 +30,7 @@ test("buildSavedPageQuestionPrompt includes saved context and question", () => {
   const prompt = buildSavedPageQuestionPrompt({ title: "T", url: "u", text: "body" }, "why?");
   assert.match(prompt, /保存的资料/);
   assert.match(prompt, /why\?/);
+  assert.match(prompt, /不可信引用材料/);
 });
 
 test("removeSavedPageById removes the selected page only", () => {

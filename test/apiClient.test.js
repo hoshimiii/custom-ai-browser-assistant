@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildChatCompletionsUrl, buildChatRequest, consumeSseBuffer, readDeltaContent } from "../src/shared/apiClient.js";
+import { buildChatCompletionsUrl, buildChatRequest, consumeSseBuffer, readDeltaContent, validateBaseUrlPolicy } from "../src/shared/apiClient.js";
 
 const settings = {
   baseUrl: "http://127.0.0.1:8787/v1/",
@@ -31,4 +31,13 @@ test("consumeSseBuffer parses full events and keeps remainder", () => {
 test("readDeltaContent returns token", () => {
   const token = readDeltaContent('{"choices":[{"delta":{"content":"hello"}}]}');
   assert.equal(token, "hello");
+});
+
+test("validateBaseUrlPolicy allows https and local http", () => {
+  assert.doesNotThrow(() => validateBaseUrlPolicy("https://api.example.com/v1"));
+  assert.doesNotThrow(() => validateBaseUrlPolicy("http://127.0.0.1:11434/v1"));
+});
+
+test("validateBaseUrlPolicy rejects remote http", () => {
+  assert.throws(() => validateBaseUrlPolicy("http://api.example.com/v1"), /HTTPS/);
 });

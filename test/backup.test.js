@@ -3,10 +3,16 @@ import assert from "node:assert/strict";
 import { BACKUP_VERSION, createBackupPayload, mergeBackupPayload, parseBackupPayload } from "../src/shared/backup.js";
 
 test("createBackupPayload includes version and app marker", () => {
-  const payload = createBackupPayload({ settings: { model: "m" }, history: [], savedPages: [] }, "now");
+  const payload = createBackupPayload({ settings: { model: "m", apiKey: "secret" }, history: [], savedPages: [] }, "now");
   assert.equal(payload.version, BACKUP_VERSION);
   assert.equal(payload.app, "custom-ai-browser-assistant");
   assert.equal(payload.settings.model, "m");
+  assert.equal(payload.settings.apiKey, "");
+});
+
+test("createBackupPayload can explicitly include api key", () => {
+  const payload = createBackupPayload({ settings: { apiKey: "secret" } }, "now", { includeApiKey: true });
+  assert.equal(payload.settings.apiKey, "secret");
 });
 
 test("parseBackupPayload rejects wrong app marker", () => {
@@ -33,4 +39,12 @@ test("mergeBackupPayload replace mode returns backup data", () => {
   const backup = createBackupPayload({ history: [{ id: "b" }] }, "new");
   const merged = mergeBackupPayload(current, backup, "replace");
   assert.deepEqual(merged.history, [{ id: "b" }]);
+});
+
+test("mergeBackupPayload preserves current api key when backup omits it", () => {
+  const current = createBackupPayload({ settings: { apiKey: "current-key" } }, "old", { includeApiKey: true });
+  const backup = createBackupPayload({ settings: { model: "new-model", apiKey: "backup-key" } }, "new");
+  const merged = mergeBackupPayload(current, backup, "merge");
+  assert.equal(merged.settings.model, "new-model");
+  assert.equal(merged.settings.apiKey, "current-key");
 });

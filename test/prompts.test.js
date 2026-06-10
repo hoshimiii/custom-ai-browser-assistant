@@ -11,6 +11,7 @@ test("buildPageQuestionPrompt includes page metadata and question", () => {
   assert.match(prompt, /Example/);
   assert.match(prompt, /https:\/\/example.com/);
   assert.match(prompt, /What is this\?/);
+  assert.match(prompt, /不可信引用材料/);
 });
 
 test("buildSelectionPrompt supports translate action", () => {

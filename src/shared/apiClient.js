@@ -20,14 +20,33 @@ export function buildChatCompletionsUrl(baseUrl) {
 }
 
 export function validateSettings(settings) {
-  if (!normalizeBaseUrl(settings.baseUrl)) {
+  const normalized = normalizeBaseUrl(settings.baseUrl);
+  if (!normalized) {
     throw new ApiError("请先配置 API Base URL");
   }
+  validateBaseUrlPolicy(normalized);
   if (!String(settings.apiKey || "").trim()) {
     throw new ApiError("请先配置 API Key");
   }
   if (!String(settings.model || "").trim()) {
     throw new ApiError("请先配置模型名称");
+  }
+}
+
+export function validateBaseUrlPolicy(baseUrl) {
+  let parsed;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new ApiError("API Base URL 不是有效 URL");
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  if (parsed.protocol === "http:" && !isLocal) {
+    throw new ApiError("远程 API Base URL 必须使用 HTTPS；HTTP 仅允许 localhost/127.0.0.1");
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new ApiError("API Base URL 仅支持 HTTP 或 HTTPS");
   }
 }
 
@@ -49,7 +68,8 @@ export async function requestChat(settings, messages, overrides = {}) {
       "Authorization": `Bearer ${settings.apiKey}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: overrides.signal
   });
   const payload = await safeJson(response);
   if (!response.ok) {

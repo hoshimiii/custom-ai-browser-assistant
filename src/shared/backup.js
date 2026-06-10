@@ -2,12 +2,12 @@ import { DEFAULT_SETTINGS } from "./defaults.js";
 
 export const BACKUP_VERSION = 1;
 
-export function createBackupPayload(data, exportedAt = new Date().toISOString()) {
+export function createBackupPayload(data, exportedAt = new Date().toISOString(), options = {}) {
   return {
     version: BACKUP_VERSION,
     exportedAt,
     app: "custom-ai-browser-assistant",
-    settings: sanitizeSettings(data.settings || {}),
+    settings: normalizeSettingsForBackup(data.settings || {}, options),
     history: Array.isArray(data.history) ? data.history : [],
     savedPages: Array.isArray(data.savedPages) ? data.savedPages : []
   };
@@ -21,7 +21,7 @@ export function parseBackupPayload(raw) {
   if (payload.version !== BACKUP_VERSION) {
     throw new Error(`不支持的备份版本：${payload.version}`);
   }
-  return createBackupPayload(payload, payload.exportedAt);
+  return createBackupPayload(payload, payload.exportedAt, { includeApiKey: true });
 }
 
 export function mergeBackupPayload(current, backup, mode = "merge") {
@@ -29,18 +29,22 @@ export function mergeBackupPayload(current, backup, mode = "merge") {
   if (mode === "replace") {
     return parsed;
   }
+  const mergedSettings = { ...(current.settings || {}), ...parsed.settings };
+  if (!parsed.settings?.apiKey && current.settings?.apiKey) {
+    mergedSettings.apiKey = current.settings.apiKey;
+  }
   return createBackupPayload({
-    settings: { ...(current.settings || {}), ...parsed.settings },
+    settings: mergedSettings,
     history: mergeById(current.history || [], parsed.history || []),
     savedPages: mergeById(current.savedPages || [], parsed.savedPages || [])
-  }, parsed.exportedAt);
+  }, parsed.exportedAt, { includeApiKey: true });
 }
 
-function sanitizeSettings(settings) {
+function normalizeSettingsForBackup(settings, options = {}) {
   return {
     ...DEFAULT_SETTINGS,
     ...settings,
-    apiKey: settings.apiKey || ""
+    apiKey: options.includeApiKey ? settings.apiKey || "" : ""
   };
 }
 

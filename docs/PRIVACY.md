@@ -30,7 +30,7 @@ The extension stores the following data in `chrome.storage.local`:
 - Recent conversation history, if enabled.
 - Saved-page library snapshots.
 
-Users can export or import this data from the options page. Users can also clear stored conversation history and delete saved pages from the side panel.
+Users can export or import this data from the options page. Backups do not include the API key by default; exporting the API key requires an explicit checkbox and confirmation. Users can also clear stored conversation history and delete saved pages from the side panel.
 
 ## Permissions
 
