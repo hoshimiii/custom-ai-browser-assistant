@@ -15,6 +15,8 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - Writing helper for focused text fields and contenteditable editors.
 - Local conversation history in Chrome storage.
 - Keyboard shortcuts for opening the assistant and page summaries.
+- Long page summarization with chunking and final synthesis.
+- Provider presets for OpenAI, OpenRouter, Ollama, LM Studio, and One API/New API style gateways.
 
 ## Install Locally
 
@@ -30,6 +32,14 @@ npm run build
 For development without packaging, you can also load the project root.
 
 The generated `dist` directory is intentionally ignored by Git. Rebuild it locally before loading or publishing the extension.
+
+To create a zip package:
+
+```powershell
+npm run package
+```
+
+The zip is written to `releases/custom-ai-browser-assistant.zip`.
 
 Default shortcuts:
 
@@ -60,6 +70,7 @@ POST /chat/completions
 npm test
 npm run lint
 npm run build
+npm run package
 ```
 
 The extension intentionally uses plain JavaScript modules and no frontend build framework. This keeps the loaded unpacked extension close to the source and makes browser debugging straightforward.

@@ -9,7 +9,9 @@ const required = [
   "src/background.js",
   "src/content/contentScript.js",
   "src/sidepanel/sidepanel.html",
-  "src/options/options.html"
+  "src/options/options.html",
+  "src/shared/chunking.js",
+  "src/shared/providers.js"
 ];
 
 const errors = [];

@@ -1,7 +1,8 @@
 import { streamChat, requestChat } from "../shared/apiClient.js";
+import { buildChunkSummaryPrompts, buildFinalSummaryPrompt, splitTextIntoChunks } from "../shared/chunking.js";
 import { DEFAULT_SETTINGS, MESSAGE_LIMIT } from "../shared/defaults.js";
 import { buildPageQuestionPrompt, buildPageSummaryPrompt, buildSearchPrompt, buildSelectionPrompt, buildWritingPrompt } from "../shared/prompts.js";
-import { getSettings, saveConversation } from "../shared/storage.js";
+import { getHistory, getSettings, saveConversation } from "../shared/storage.js";
 
 const state = {
   settings: DEFAULT_SETTINGS,
@@ -22,6 +23,8 @@ const elements = {
   askPage: document.getElementById("askPage"),
   extractTodos: document.getElementById("extractTodos"),
   writingHelp: document.getElementById("writingHelp"),
+  refreshHistory: document.getElementById("refreshHistory"),
+  historyList: document.getElementById("historyList"),
   clearChat: document.getElementById("clearChat"),
   stopChat: document.getElementById("stopChat")
 };
@@ -32,6 +35,7 @@ async function init() {
   state.settings = await getSettings();
   updateModelLabel();
   wireEvents();
+  await renderHistory();
   await consumePendingAction();
   addMessage("assistant", "配置 API 后即可开始使用。可以直接聊天，也可以总结当前网页或处理选中文本。");
 }
@@ -52,6 +56,7 @@ function wireEvents() {
   });
   elements.extractTodos.addEventListener("click", () => runPageQuestion("请从当前网页中提取行动项、待办、风险和截止时间。"));
   elements.writingHelp.addEventListener("click", () => runWritingHelp("polish"));
+  elements.refreshHistory.addEventListener("click", renderHistory);
   elements.clearChat.addEventListener("click", () => {
     state.messages = [];
     elements.messages.textContent = "";
@@ -90,9 +95,8 @@ async function sendUserPrompt(text) {
 async function runPageSummary() {
   const page = await extractCurrentPage();
   if (!page) return;
-  const prompt = buildPageSummaryPrompt(page);
   addMessage("user", "总结当前网页");
-  await askModel([{ role: "user", content: prompt }]);
+  await summarizePage(page);
 }
 
 async function runPageQuestion(question) {
@@ -173,6 +177,24 @@ async function askModel(newMessages) {
   }
 }
 
+async function summarizePage(page) {
+  const chunks = splitTextIntoChunks(page.text || "", state.settings.pageChunkChars);
+  if (chunks.length <= 1) {
+    await askModel([{ role: "user", content: buildPageSummaryPrompt(page) }]);
+    return;
+  }
+
+  addMessage("assistant", `页面较长，正在分 ${chunks.length} 段摘要后汇总。`);
+  const chunkPrompts = buildChunkSummaryPrompts(page, state.settings.pageChunkChars);
+  const partials = [];
+  for (const chunk of chunkPrompts) {
+    const partial = await requestChat(state.settings, buildMessages([{ role: "user", content: chunk.prompt }]));
+    partials.push(partial);
+    addMessage("assistant", `分块 ${chunk.index + 1}/${chunk.total} 摘要完成。`);
+  }
+  await askModel([{ role: "user", content: buildFinalSummaryPrompt(page, partials) }]);
+}
+
 function buildMessages(newMessages) {
   return [
     { role: "system", content: state.settings.systemPrompt },
@@ -222,6 +244,7 @@ async function persist() {
     title: state.messages.find((message) => message.role === "user")?.content?.slice(0, 40) || "Conversation",
     messages: state.messages
   });
+  await renderHistory();
 }
 
 function scrollToBottom() {
@@ -230,4 +253,23 @@ function scrollToBottom() {
 
 function updateModelLabel() {
   elements.modelLabel.textContent = state.settings.model ? `Model: ${state.settings.model}` : "Not configured";
+}
+
+async function renderHistory() {
+  const history = await getHistory();
+  elements.historyList.textContent = "";
+  for (const conversation of history.slice(0, 8)) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "history-item";
+    button.textContent = conversation.title || "Untitled";
+    button.addEventListener("click", () => {
+      state.messages = conversation.messages || [];
+      elements.messages.textContent = "";
+      for (const message of state.messages) {
+        addMessage(message.role, message.content);
+      }
+    });
+    elements.historyList.append(button);
+  }
 }

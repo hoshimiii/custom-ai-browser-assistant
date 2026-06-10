@@ -14,6 +14,8 @@ This project aims to cover the most common Monica-like browser assistant workflo
 | Search assistant | Implemented | Injects an ask button on Google/Bing search pages. |
 | Writing assistant | Implemented | Polishes focused editable fields and writes result back. |
 | Local history | Partial | Saves recent conversations; full history browser is planned. |
+| Long page chunking | Implemented | Splits long pages, summarizes chunks, then synthesizes final summary. |
+| Provider presets | Implemented | OpenAI, OpenRouter, Ollama, LM Studio, One API/New API, custom. |
 | PDF/YouTube | Planned | Needs dedicated extractors and fallback UX. |
 | Knowledge base | Planned | IndexedDB storage and retrieval layer. |
 | Image/video generation | Out of scope for MVP | Can be added through provider-specific tools later. |
@@ -60,9 +62,8 @@ chrome://extensions -> Developer mode -> Load unpacked -> E:\codes\custom-ai-bro
 
 ## Next Iterations
 
-1. Add a conversation history browser in the side panel.
-2. Add a provider preset selector for common OpenAI-compatible services.
-3. Add page chunking with map-reduce summarization for very long pages.
-4. Add YouTube transcript extraction.
-5. Add PDF extraction through a local helper service or PDF.js-based reader.
-6. Add IndexedDB knowledge base and local semantic search.
+1. Add richer history search, rename, pin, and delete actions.
+2. Add YouTube transcript extraction.
+3. Add PDF extraction through a local helper service or PDF.js-based reader.
+4. Add IndexedDB knowledge base and local semantic search.
+5. Add optional provider-specific image generation tools.

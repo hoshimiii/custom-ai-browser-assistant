@@ -11,6 +11,10 @@
       <h1>AI Assistant Settings</h1>
       <form id="settingsForm">
         <label>
+          <span>Provider Preset</span>
+          <select id="providerPreset" name="providerPreset"></select>
+        </label>
+        <label>
           <span>API Base URL</span>
           <input id="baseUrl" name="baseUrl" placeholder="https://api.example.com/v1" autocomplete="off">
         </label>
@@ -29,6 +33,10 @@
         <label>
           <span>Timeout Seconds</span>
           <input id="timeoutSeconds" name="timeoutSeconds" type="number" min="10" max="600" step="10">
+        </label>
+        <label>
+          <span>Page Chunk Size</span>
+          <input id="pageChunkChars" name="pageChunkChars" type="number" min="4000" max="30000" step="1000">
         </label>
         <label class="checkbox">
           <input id="stream" name="stream" type="checkbox">

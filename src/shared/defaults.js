@@ -4,6 +4,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   model: "",
   stream: true,
   timeoutSeconds: 120,
+  providerPreset: "custom",
+  pageChunkChars: 12000,
   targetLanguage: "中文",
   systemPrompt: "你是浏览器中的 AI 助手。回答要准确、简洁、结构清晰，并优先给出可执行建议。",
   saveHistory: true

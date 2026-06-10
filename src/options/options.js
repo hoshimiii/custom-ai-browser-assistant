@@ -1,5 +1,6 @@
 import { requestChat } from "../shared/apiClient.js";
 import { DEFAULT_SETTINGS } from "../shared/defaults.js";
+import { applyProviderPreset, PROVIDER_PRESETS } from "../shared/providers.js";
 import { getSettings, saveSettings } from "../shared/storage.js";
 
 const form = document.getElementById("settingsForm");
@@ -10,7 +11,11 @@ init();
 
 async function init() {
   const settings = await getSettings();
+  fillProviderPresets();
   fillForm(settings);
+  form.elements.providerPreset.addEventListener("change", () => {
+    fillForm(applyProviderPreset(readForm(), form.elements.providerPreset.value));
+  });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     await saveSettings(readForm());
@@ -43,13 +48,25 @@ function fillForm(settings) {
   }
 }
 
+function fillProviderPresets() {
+  form.elements.providerPreset.textContent = "";
+  for (const preset of PROVIDER_PRESETS) {
+    const option = document.createElement("option");
+    option.value = preset.id;
+    option.textContent = preset.label;
+    form.elements.providerPreset.append(option);
+  }
+}
+
 function readForm() {
   return {
+    providerPreset: form.elements.providerPreset.value || DEFAULT_SETTINGS.providerPreset,
     baseUrl: form.elements.baseUrl.value.trim(),
     apiKey: form.elements.apiKey.value.trim(),
     model: form.elements.model.value.trim(),
     targetLanguage: form.elements.targetLanguage.value.trim() || DEFAULT_SETTINGS.targetLanguage,
     timeoutSeconds: Number(form.elements.timeoutSeconds.value || DEFAULT_SETTINGS.timeoutSeconds),
+    pageChunkChars: Number(form.elements.pageChunkChars.value || DEFAULT_SETTINGS.pageChunkChars),
     stream: form.elements.stream.checked,
     saveHistory: form.elements.saveHistory.checked,
     systemPrompt: form.elements.systemPrompt.value.trim() || DEFAULT_SETTINGS.systemPrompt
