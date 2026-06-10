@@ -3,7 +3,7 @@ import path from "node:path";
 
 const root = process.cwd();
 const dist = path.join(root, "dist");
-const include = ["manifest.json", "src", "README.md"];
+const include = ["manifest.json", "src", "assets", "README.md"];
 
 fs.rmSync(dist, { recursive: true, force: true });
 fs.mkdirSync(dist, { recursive: true });

@@ -71,6 +71,7 @@
         <button data-action="translate">翻译</button>
         <button data-action="summarize">总结</button>
         <button data-action="rewrite">改写</button>
+        <button data-action="continue">续写</button>
       `;
       toolbar.addEventListener("mousedown", (event) => event.preventDefault());
       toolbar.addEventListener("click", (event) => {

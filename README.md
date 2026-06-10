@@ -9,6 +9,7 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - Side panel chat with streaming responses.
 - Configurable OpenAI-compatible `Base URL`, `API Key`, and `Model`.
 - Current page summarization and question answering.
+- Action center for page analysis and writing tasks.
 - Selected-text actions: explain, translate, summarize, rewrite.
 - Right-click context menu actions.
 - Search result assistant panel for Google and Bing.

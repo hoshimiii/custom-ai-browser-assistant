@@ -4,8 +4,18 @@
   "short_name": "AI Assistant",
   "version": "0.1.0",
   "description": "BYOK AI assistant for chat, page summaries, selected text, search, and writing help.",
+  "icons": {
+    "16": "assets/icon-16.png",
+    "32": "assets/icon-32.png",
+    "48": "assets/icon-48.png",
+    "128": "assets/icon-128.png"
+  },
   "action": {
-    "default_title": "Open AI Assistant"
+    "default_title": "Open AI Assistant",
+    "default_icon": {
+      "16": "assets/icon-16.png",
+      "32": "assets/icon-32.png"
+    }
   },
   "background": {
     "service_worker": "src/background.js",

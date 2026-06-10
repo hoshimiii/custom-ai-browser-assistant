@@ -7,6 +7,7 @@ This project aims to cover the most common Monica-like browser assistant workflo
 | Area | MVP Status | Notes |
 | --- | --- | --- |
 | Side panel chat | Implemented | Streaming and non-streaming OpenAI-compatible chat. |
+| Action center | Implemented | Central registry for page, selection, and writing workflows. |
 | Custom model config | Implemented | BYOK Base URL, API Key, model, timeout, system prompt. |
 | Page summary | Implemented | Reads active page text through content script. |
 | Ask current page | Implemented | Uses page title, URL, and extracted text as context. |

@@ -6,10 +6,15 @@ const manifestPath = path.join(root, "manifest.json");
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
 const required = [
+  "assets/icon-16.png",
+  "assets/icon-32.png",
+  "assets/icon-48.png",
+  "assets/icon-128.png",
   "src/background.js",
   "src/content/contentScript.js",
   "src/sidepanel/sidepanel.html",
   "src/options/options.html",
+  "src/shared/actions.js",
   "src/shared/chunking.js",
   "src/shared/providers.js"
 ];

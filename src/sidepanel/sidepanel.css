@@ -59,11 +59,22 @@ button:disabled {
 
 .quick-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
   gap: 8px;
   padding: 10px 14px;
   border-bottom: 1px solid #d8dee4;
   background: #ffffff;
+}
+
+.quick-actions h2 {
+  margin: 0 0 6px;
+  color: #57606a;
+  font-size: 12px;
+}
+
+.action-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
 }
 
 .messages {

@@ -15,11 +15,16 @@
       <button id="openOptions" title="Settings" type="button">⚙</button>
     </header>
 
-    <section class="quick-actions" aria-label="Page actions">
-      <button id="summarizePage" type="button">总结页面</button>
+    <section class="quick-actions" aria-label="Assistant actions">
+      <div>
+        <h2>网页</h2>
+        <div id="pageActions" class="action-grid"></div>
+      </div>
+      <div>
+        <h2>写作</h2>
+        <div id="writingActions" class="action-grid"></div>
+      </div>
       <button id="askPage" type="button">问当前页</button>
-      <button id="extractTodos" type="button">提取待办</button>
-      <button id="writingHelp" type="button">写作助手</button>
     </section>
 
     <section class="history-panel" aria-label="Conversation history">

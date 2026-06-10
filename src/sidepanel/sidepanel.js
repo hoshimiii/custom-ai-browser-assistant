@@ -1,4 +1,5 @@
 import { streamChat, requestChat } from "../shared/apiClient.js";
+import { findPageAction, PAGE_ACTIONS, WRITING_ACTIONS } from "../shared/actions.js";
 import { buildChunkSummaryPrompts, buildFinalSummaryPrompt, splitTextIntoChunks } from "../shared/chunking.js";
 import { DEFAULT_SETTINGS, MESSAGE_LIMIT } from "../shared/defaults.js";
 import { buildPageQuestionPrompt, buildPageSummaryPrompt, buildSearchPrompt, buildSelectionPrompt, buildWritingPrompt } from "../shared/prompts.js";
@@ -19,10 +20,9 @@ const elements = {
   composer: document.getElementById("composer"),
   promptInput: document.getElementById("promptInput"),
   openOptions: document.getElementById("openOptions"),
-  summarizePage: document.getElementById("summarizePage"),
+  pageActions: document.getElementById("pageActions"),
+  writingActions: document.getElementById("writingActions"),
   askPage: document.getElementById("askPage"),
-  extractTodos: document.getElementById("extractTodos"),
-  writingHelp: document.getElementById("writingHelp"),
   refreshHistory: document.getElementById("refreshHistory"),
   historyList: document.getElementById("historyList"),
   clearChat: document.getElementById("clearChat"),
@@ -34,6 +34,7 @@ init();
 async function init() {
   state.settings = await getSettings();
   updateModelLabel();
+  renderActionButtons();
   wireEvents();
   await renderHistory();
   await consumePendingAction();
@@ -49,13 +50,10 @@ function wireEvents() {
     elements.promptInput.value = "";
     await sendUserPrompt(text);
   });
-  elements.summarizePage.addEventListener("click", () => runPageSummary());
   elements.askPage.addEventListener("click", async () => {
     const question = elements.promptInput.value.trim() || window.prompt("请输入关于当前网页的问题");
     if (question) await runPageQuestion(question);
   });
-  elements.extractTodos.addEventListener("click", () => runPageQuestion("请从当前网页中提取行动项、待办、风险和截止时间。"));
-  elements.writingHelp.addEventListener("click", () => runWritingHelp("polish"));
   elements.refreshHistory.addEventListener("click", renderHistory);
   elements.clearChat.addEventListener("click", () => {
     state.messages = [];
@@ -71,7 +69,7 @@ function wireEvents() {
       runSelectionAction(message.action, message.selectionText);
     }
     if (message?.type === "PAGE_ACTION" && message.action === "summarize-page") {
-      runPageSummary();
+      runPageAction("summary");
     }
     if (message?.type === "SEARCH_ACTION") {
       runSearchAction(message.query);
@@ -93,10 +91,19 @@ async function sendUserPrompt(text) {
 }
 
 async function runPageSummary() {
+  await runPageAction("summary");
+}
+
+async function runPageAction(actionId) {
   const page = await extractCurrentPage();
   if (!page) return;
-  addMessage("user", "总结当前网页");
-  await summarizePage(page);
+  const action = findPageAction(actionId);
+  addMessage("user", action.label);
+  if (action.id === "summary") {
+    await summarizePage(page);
+  } else {
+    await askModel([{ role: "user", content: buildPageQuestionPrompt(page, action.prompt) }]);
+  }
 }
 
 async function runPageQuestion(question) {
@@ -132,6 +139,26 @@ async function runWritingHelp(action) {
   const result = await requestChat(state.settings, buildMessages([{ role: "user", content: buildWritingPrompt(action, text, state.settings) }]));
   await chrome.tabs.sendMessage(tab.id, { type: "REPLACE_ACTIVE_EDITABLE", text: result });
   addMessage("assistant", result);
+}
+
+function renderActionButtons() {
+  elements.pageActions.textContent = "";
+  for (const action of PAGE_ACTIONS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = action.label;
+    button.addEventListener("click", () => runPageAction(action.id));
+    elements.pageActions.append(button);
+  }
+
+  elements.writingActions.textContent = "";
+  for (const action of WRITING_ACTIONS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = action.label;
+    button.addEventListener("click", () => runWritingHelp(action.id));
+    elements.writingActions.append(button);
+  }
 }
 
 async function askModel(newMessages) {
