@@ -11,6 +11,7 @@ This project aims to cover the most common Monica-like browser assistant workflo
 | Custom model config | Implemented | BYOK Base URL, API Key, model, timeout, system prompt. |
 | Page summary | Implemented | Reads active page text through content script. |
 | Ask current page | Implemented | Uses page title, URL, and extracted text as context. |
+| Page translation/rewrite | Implemented | Page action center includes full-page translation and readable rewrite prompts. |
 | Selected text actions | Implemented | Explain, translate, summarize, rewrite via floating toolbar and context menus. |
 | Search assistant | Implemented | Injects an ask button on Google/Bing search pages. |
 | Writing assistant | Implemented | Polishes focused editable fields and writes result back. |

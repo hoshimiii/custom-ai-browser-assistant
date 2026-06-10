@@ -15,6 +15,16 @@ export const PAGE_ACTIONS = Object.freeze([
     prompt: "请从当前网页中提取行动项、待办、风险和截止时间。"
   },
   {
+    id: "translate-page",
+    label: "翻译页面",
+    prompt: "请将当前网页的主要内容翻译成用户设置的目标语言，保留标题、术语、列表结构和关键数据。"
+  },
+  {
+    id: "rewrite-page",
+    label: "重写页面",
+    prompt: "请将当前网页主要内容改写成结构清晰、适合快速阅读的中文说明，保留事实和关键数据，不要添加网页中没有的信息。"
+  },
+  {
     id: "critique",
     label: "批判分析",
     prompt: "请批判性分析当前网页的论点、证据强度、潜在偏见和需要核实的信息。"
