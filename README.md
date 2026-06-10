@@ -81,6 +81,7 @@ npm test
 npm run lint
 npm run build
 npm run package
+npm run audit:release
 ```
 
 The extension intentionally uses plain JavaScript modules and no frontend build framework. This keeps the loaded unpacked extension close to the source and makes browser debugging straightforward.

@@ -52,6 +52,8 @@ This executes:
 - `node --test`
 - manifest and required-file checks
 - dist build
+- zip packaging
+- release audit for installable artifacts and core files
 
 ## Browser Install
 
