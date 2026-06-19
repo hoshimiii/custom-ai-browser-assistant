@@ -124,3 +124,50 @@
     display: none;
   }
 }
+
+.custom-ai-assistant-picking,
+.custom-ai-assistant-picking * {
+  cursor: crosshair !important;
+}
+
+.custom-ai-assistant-pick-hover {
+  outline: 2px solid #14b8a6 !important;
+  outline-offset: 2px !important;
+  background-color: rgba(20, 184, 166, 0.08) !important;
+}
+
+.custom-ai-assistant-selected-region {
+  outline: 2px solid #0969da !important;
+  outline-offset: 3px !important;
+  background-color: rgba(9, 105, 218, 0.06) !important;
+}
+
+.custom-ai-assistant-translated-original {
+  text-decoration-line: underline !important;
+  text-decoration-style: dotted !important;
+  text-decoration-thickness: 1.5px !important;
+  text-decoration-color: #0f766e !important;
+  text-underline-offset: 3px !important;
+}
+
+.custom-ai-assistant-inline-translation {
+  display: block;
+  box-sizing: border-box;
+  margin: 6px 0 12px;
+  padding: 8px 10px;
+  border-left: 3px solid #14b8a6;
+  border-radius: 6px;
+  background: #ecfdf5;
+  color: #134e4a;
+  font: 14px/1.6 Arial, "Microsoft YaHei", sans-serif;
+  text-decoration: none !important;
+  white-space: pre-wrap;
+}
+
+li.custom-ai-assistant-inline-translation {
+  list-style: none;
+}
+
+html.custom-ai-assistant-hide-translations .custom-ai-assistant-inline-translation {
+  display: none !important;
+}

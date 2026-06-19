@@ -77,15 +77,48 @@ button[type="submit"] {
   color: #ffffff;
 }
 
-.backup-panel {
+.backup-panel,
+.shortcut-panel {
   margin-top: 28px;
   padding-top: 20px;
   border-top: 1px solid #d8dee4;
 }
 
-.backup-panel p {
+.backup-panel p,
+.shortcut-panel p {
   color: #57606a;
   font-size: 13px;
+}
+
+.warning-text {
+  color: #9a6700 !important;
+}
+
+.shortcut-panel dl {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.shortcut-panel dl div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #d8dee4;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.shortcut-panel dt {
+  font-weight: 700;
+}
+
+.shortcut-panel dd {
+  margin: 0;
+  color: #0969da;
+  font-family: Consolas, monospace;
 }
 
 .file-button {

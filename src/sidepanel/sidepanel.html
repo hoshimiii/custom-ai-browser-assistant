@@ -11,6 +11,7 @@
       <div>
         <h1>AI Assistant</h1>
         <p id="modelLabel">Not configured</p>
+        <p class="shortcut-hint">Ctrl+Shift+M 打开 · Ctrl+Shift+S 总结</p>
       </div>
       <button id="openOptions" title="Settings" type="button">⚙</button>
     </header>
@@ -27,10 +28,39 @@
         </div>
       </div>
       <div>
+        <h2>上下文</h2>
+        <div class="action-grid">
+          <button id="selectRegion" type="button">选择区域</button>
+          <button id="clearRegion" type="button" disabled>取消区域</button>
+        </div>
+      </div>
+      <div>
         <h2>写作</h2>
         <div id="writingActions" class="action-grid"></div>
       </div>
       <button id="askPage" type="button">问当前页</button>
+    </section>
+
+    <section class="context-panel" aria-label="Current context">
+      <div class="context-status">
+        <strong id="contextMode">上下文：读取中</strong>
+        <span id="contextDetail"></span>
+      </div>
+      <div class="context-actions">
+        <button id="refreshContext" type="button">刷新上下文</button>
+        <button id="hideTranslations" type="button">隐藏译文</button>
+        <button id="showTranslations" type="button">显示译文</button>
+        <button id="clearTranslations" type="button">清除译文</button>
+      </div>
+      <div id="screenshotPanel" class="screenshot-panel" hidden>
+        <img id="screenshotPreview" alt="当前页面截图预览">
+        <div class="screenshot-actions">
+          <button id="sendScreenshotQuestion" type="button">发送截图问题</button>
+          <button id="analyzeScreenshot" type="button">直接分析</button>
+          <button id="retakeScreenshot" type="button">重新截图</button>
+          <button id="clearScreenshot" type="button">取消截图</button>
+        </div>
+      </div>
     </section>
 
     <section class="history-panel" aria-label="Conversation history">
@@ -56,7 +86,7 @@
     <main id="messages" class="messages" aria-live="polite"></main>
 
     <form id="composer" class="composer">
-      <textarea id="promptInput" rows="3" placeholder="输入问题，或先点击上方页面工具"></textarea>
+      <textarea id="promptInput" rows="3" placeholder="直接输入问题会默认读取当前网页或选中区域；有截图预览时会作为截图问题发送"></textarea>
       <div class="composer-actions">
         <button id="clearChat" type="button">清空</button>
         <button id="stopChat" type="button" disabled>停止</button>

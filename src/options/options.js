@@ -84,9 +84,6 @@ function showStatus(message) {
 }
 
 async function handleExportBackup() {
-  if (includeApiKeyInBackup.checked && !window.confirm("备份将包含 API Key。请只保存在可信位置。继续导出吗？")) {
-    return;
-  }
   const payload = await exportBackup({ includeApiKey: includeApiKeyInBackup.checked });
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -95,7 +92,7 @@ async function handleExportBackup() {
   link.download = `ai-assistant-backup-${new Date().toISOString().slice(0, 10)}.json`;
   link.click();
   URL.revokeObjectURL(url);
-  showStatus("已导出备份。");
+  showStatus(includeApiKeyInBackup.checked ? "已导出备份，文件包含 API Key，请只保存在可信位置。" : "已导出备份，未包含 API Key。");
 }
 
 async function handleImportBackup() {

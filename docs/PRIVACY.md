@@ -13,6 +13,7 @@ Chrome extension -> user-configured Base URL -> user-selected model provider
 Depending on the user action, the request may include:
 
 - Chat messages typed into the side panel.
+- Current page or selected-region text when the user sends a side panel question from a webpage.
 - Selected text from the active page.
 - Extracted text from the active page.
 - YouTube page metadata, description, visible transcript, and visible page text.
@@ -20,7 +21,7 @@ Depending on the user action, the request may include:
 - Screenshot image data when the user clicks screenshot Q&A.
 - Saved-page library snapshots when the user asks questions against saved content.
 
-No page content is sent automatically on page load. User action is required.
+No page content is sent automatically on page load. User action is required. When the user sends a side panel question on a readable webpage, the extension includes the current page or selected-region context by default.
 
 ## Local Storage
 
@@ -30,7 +31,7 @@ The extension stores the following data in `chrome.storage.local`:
 - Recent conversation history, if enabled.
 - Saved-page library snapshots.
 
-Users can export or import this data from the options page. Backups do not include the API key by default; exporting the API key requires an explicit checkbox and confirmation. Users can also clear stored conversation history and delete saved pages from the side panel.
+Users can export or import this data from the options page. Backups do not include the API key by default; exporting the API key requires explicitly enabling the API-key checkbox. Users can also clear stored conversation history and delete saved pages from the side panel.
 
 ## Permissions
 

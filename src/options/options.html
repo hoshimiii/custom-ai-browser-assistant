@@ -62,7 +62,7 @@
           <button id="exportBackup" type="button">Export JSON</button>
           <label class="checkbox">
             <input id="includeApiKeyInBackup" type="checkbox">
-            <span>Include API Key</span>
+            <span>Include API Key in exported JSON</span>
           </label>
           <label class="file-button">
             Import JSON
@@ -73,6 +73,21 @@
             <span>Replace existing data</span>
           </label>
         </div>
+        <p class="warning-text">API Key 默认不会导出。只有勾选上方选项时，导出的 JSON 才会包含 API Key。</p>
+      </section>
+      <section class="shortcut-panel">
+        <h2>Shortcuts</h2>
+        <dl>
+          <div>
+            <dt>打开助手</dt>
+            <dd>Ctrl+Shift+M</dd>
+          </div>
+          <div>
+            <dt>总结当前页</dt>
+            <dd>Ctrl+Shift+S</dd>
+          </div>
+        </dl>
+        <p>如果快捷键冲突，可以在 Chrome 地址栏打开 <code>chrome://extensions/shortcuts</code> 修改。</p>
       </section>
       <p id="status" role="status"></p>
     </main>

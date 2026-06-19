@@ -2,7 +2,38 @@
   const TOOLBAR_ID = "custom-ai-assistant-selection-toolbar";
   const SEARCH_PANEL_ID = "custom-ai-assistant-search-panel";
   const LAUNCHER_ID = "custom-ai-assistant-launcher";
+  const TRANSLATABLE_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,figcaption,td,th,dd,dt,summary";
+  const CONTAINER_SELECTOR = "article,main,[role='main'],section,div";
+  const SKIP_SELECTOR = [
+    "script",
+    "style",
+    "noscript",
+    "template",
+    "svg",
+    "canvas",
+    "code",
+    "pre",
+    "textarea",
+    "input",
+    "select",
+    "button",
+    "nav",
+    "header",
+    "footer",
+    "[aria-hidden='true']",
+    "[hidden]",
+    "[contenteditable='true']",
+    `#${TOOLBAR_ID}`,
+    `#${SEARCH_PANEL_ID}`,
+    `#${LAUNCHER_ID}`,
+    ".custom-ai-assistant-inline-translation"
+  ].join(",");
+
   let lastSelection = "";
+  let lastSelectionRange = null;
+  let selectedRegion = null;
+  let pickMode = false;
+  let highlightedPickNode = null;
 
   document.addEventListener("mouseup", handleSelection);
   document.addEventListener("keyup", handleSelection);
@@ -12,6 +43,44 @@
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "EXTRACT_PAGE") {
       sendResponse({ ok: true, page: extractPage() });
+      return true;
+    }
+    if (message?.type === "GET_CONTEXT_STATUS") {
+      sendResponse({ ok: true, context: buildContextStatus() });
+      return true;
+    }
+    if (message?.type === "START_ELEMENT_PICK") {
+      startElementPicker();
+      sendResponse({ ok: true });
+      return true;
+    }
+    if (message?.type === "CLEAR_SELECTED_REGION") {
+      clearSelectedRegion();
+      sendResponse({ ok: true });
+      return true;
+    }
+    if (message?.type === "GET_TRANSLATABLE_BLOCKS") {
+      sendResponse({ ok: true, blocks: collectTranslatableBlocks(message.limit || 48), context: buildContextStatus() });
+      return true;
+    }
+    if (message?.type === "APPLY_TRANSLATIONS") {
+      applyTranslations(message.translations || []);
+      sendResponse({ ok: true });
+      return true;
+    }
+    if (message?.type === "APPLY_SELECTION_TRANSLATION") {
+      applySelectionTranslation(message.translation || "");
+      sendResponse({ ok: true });
+      return true;
+    }
+    if (message?.type === "TOGGLE_TRANSLATIONS") {
+      setTranslationsHidden(Boolean(message.hidden));
+      sendResponse({ ok: true });
+      return true;
+    }
+    if (message?.type === "CLEAR_TRANSLATIONS") {
+      clearTranslations();
+      sendResponse({ ok: true });
       return true;
     }
     if (message?.type === "GET_ACTIVE_EDITABLE") {
@@ -31,14 +100,48 @@
 
   function extractPage() {
     const type = detectPageType(location.href, document.contentType);
+    const region = getSelectedRegionSnapshot();
+    if (region?.text) {
+      return {
+        type,
+        scope: "selected-region",
+        title: `${region.label} - ${document.title}`,
+        url: location.href,
+        text: region.text,
+        selectedRegion: region
+      };
+    }
     if (type === "youtube") {
-      return extractYouTubePage();
+      return { ...extractYouTubePage(), scope: "page" };
     }
     return {
       type,
+      scope: "page",
       title: document.title,
       url: location.href,
       text: collectReadableText()
+    };
+  }
+
+  function buildContextStatus() {
+    const region = getSelectedRegionSnapshot();
+    if (region?.text) {
+      return {
+        mode: "selected-region",
+        label: region.label,
+        chars: region.text.length,
+        url: location.href,
+        title: document.title
+      };
+    }
+    const text = collectReadableText();
+    return {
+      mode: text ? "page" : "unavailable",
+      label: text ? "当前网页" : "未读取网页",
+      chars: text.length,
+      url: location.href,
+      title: document.title,
+      pageType: detectPageType(location.href, document.contentType)
     };
   }
 
@@ -109,6 +212,11 @@
   }
 
   function collectReadableText() {
+    const root = getContextRoot() || getReadableRoot();
+    return root?.innerText || document.body?.innerText || "";
+  }
+
+  function getReadableRoot() {
     const candidates = [
       "article",
       "main",
@@ -116,20 +224,20 @@
       ".content",
       "#content"
     ];
-    const node = candidates.map((selector) => document.querySelector(selector)).find(Boolean) || document.body;
-    return node.innerText || document.body.innerText || "";
+    return candidates.map((selector) => document.querySelector(selector)).find(Boolean) || document.body;
   }
 
   function handleSelection() {
+    if (pickMode) return;
     const selection = window.getSelection();
     const text = selection?.toString()?.trim() || "";
-    if (!text || text.length < 2) {
+    if (!text || text.length < 2 || !selection.rangeCount) {
       hideToolbar();
       return;
     }
     lastSelection = text;
-    const range = selection.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
+    lastSelectionRange = selection.getRangeAt(0).cloneRange();
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
     if (!rect || rect.width === 0) return;
     showToolbar(rect);
   }
@@ -216,6 +324,264 @@
       return "";
     }
     return "";
+  }
+
+  function startElementPicker() {
+    if (pickMode) return;
+    pickMode = true;
+    hideToolbar();
+    document.documentElement.classList.add("custom-ai-assistant-picking");
+    document.addEventListener("mousemove", handlePickerMove, true);
+    document.addEventListener("click", handlePickerClick, true);
+    document.addEventListener("keydown", handlePickerKeydown, true);
+    chrome.runtime.sendMessage({ type: "REGION_PICK_STARTED" });
+  }
+
+  function stopElementPicker() {
+    pickMode = false;
+    clearPickerHighlight();
+    document.documentElement.classList.remove("custom-ai-assistant-picking");
+    document.removeEventListener("mousemove", handlePickerMove, true);
+    document.removeEventListener("click", handlePickerClick, true);
+    document.removeEventListener("keydown", handlePickerKeydown, true);
+  }
+
+  function handlePickerMove(event) {
+    const node = findPickTarget(event.target);
+    if (node === highlightedPickNode) return;
+    clearPickerHighlight();
+    highlightedPickNode = node;
+    highlightedPickNode?.classList.add("custom-ai-assistant-pick-hover");
+  }
+
+  function handlePickerClick(event) {
+    const node = findPickTarget(event.target);
+    if (!node) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectRegion(node);
+    stopElementPicker();
+  }
+
+  function handlePickerKeydown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      stopElementPicker();
+      chrome.runtime.sendMessage({ type: "REGION_PICK_CANCELLED" });
+    }
+  }
+
+  function findPickTarget(target) {
+    const start = target?.nodeType === Node.ELEMENT_NODE ? target : target?.parentElement;
+    if (!start || isExtensionNode(start) || start.closest(SKIP_SELECTOR)) return null;
+    let node = start.closest(`${TRANSLATABLE_SELECTOR},${CONTAINER_SELECTOR}`) || start;
+    while (node && node !== document.body && normalizeText(node.innerText).length < 40) {
+      node = node.parentElement;
+    }
+    if (!node || isExtensionNode(node) || node.matches("html")) return null;
+    return node === document.body ? getReadableRoot() : node;
+  }
+
+  function selectRegion(node) {
+    clearSelectedRegion();
+    const text = normalizeText(node.innerText || node.textContent || "");
+    if (!text) return;
+    const id = ensureElementId(node);
+    node.classList.add("custom-ai-assistant-selected-region");
+    selectedRegion = {
+      id,
+      element: node,
+      label: buildElementLabel(node),
+      text
+    };
+    chrome.runtime.sendMessage({ type: "REGION_SELECTED", region: getSelectedRegionSnapshot() });
+  }
+
+  function clearSelectedRegion() {
+    if (selectedRegion?.element?.isConnected) {
+      selectedRegion.element.classList.remove("custom-ai-assistant-selected-region");
+    }
+    selectedRegion = null;
+    chrome.runtime.sendMessage({ type: "REGION_CLEARED" });
+  }
+
+  function getSelectedRegionSnapshot() {
+    if (!selectedRegion?.element?.isConnected) {
+      selectedRegion = null;
+      return null;
+    }
+    const text = normalizeText(selectedRegion.element.innerText || selectedRegion.text || "");
+    if (!text) return null;
+    return {
+      id: selectedRegion.id,
+      label: selectedRegion.label,
+      text,
+      chars: text.length
+    };
+  }
+
+  function getContextRoot() {
+    return selectedRegion?.element?.isConnected ? selectedRegion.element : null;
+  }
+
+  function collectTranslatableBlocks(limit) {
+    const root = getContextRoot() || getReadableRoot();
+    if (!root) return [];
+    const nodes = [];
+    if (root.matches?.(TRANSLATABLE_SELECTOR)) {
+      nodes.push(root);
+    }
+    nodes.push(...root.querySelectorAll(TRANSLATABLE_SELECTOR));
+
+    const seen = new Set();
+    const blocks = [];
+    for (const node of nodes) {
+      if (blocks.length >= limit) break;
+      if (!isTranslatableNode(node)) continue;
+      const text = normalizeText(node.innerText || node.textContent || "");
+      const key = text.slice(0, 220);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      blocks.push({
+        id: ensureElementId(node),
+        tag: node.tagName.toLowerCase(),
+        text
+      });
+    }
+    return blocks;
+  }
+
+  function isTranslatableNode(node) {
+    if (!node || isExtensionNode(node) || node.closest(SKIP_SELECTOR)) return false;
+    if (!isVisible(node)) return false;
+    const text = normalizeText(node.innerText || node.textContent || "");
+    if (text.length < 8 || text.length > 1800) return false;
+    if (/^[\d\s.,:;!?()[\]{}'"“”‘’\-_/\\|]+$/.test(text)) return false;
+    return !hasLargeTranslatableChildren(node);
+  }
+
+  function hasLargeTranslatableChildren(node) {
+    for (const child of node.querySelectorAll(TRANSLATABLE_SELECTOR)) {
+      if (child === node || child.closest(".custom-ai-assistant-inline-translation")) continue;
+      const text = normalizeText(child.innerText || child.textContent || "");
+      if (text.length >= 8) return true;
+    }
+    return false;
+  }
+
+  function applyTranslations(translations) {
+    for (const item of translations) {
+      const id = String(item?.id || "").trim();
+      const text = String(item?.text || "").trim();
+      if (!id || !text) continue;
+      const node = findTranslationSource(id);
+      if (!node) continue;
+      applyTranslationAfterNode(node, text, id);
+    }
+    setTranslationsHidden(false);
+  }
+
+  function applySelectionTranslation(translation) {
+    const text = String(translation || "").trim();
+    if (!text) return;
+
+    let source = null;
+    if (lastSelectionRange && !lastSelectionRange.collapsed) {
+      const marker = document.createElement("span");
+      marker.className = "custom-ai-assistant-translated-original";
+      marker.dataset.customAiTranslationId = `selection-${Date.now()}`;
+      try {
+        lastSelectionRange.surroundContents(marker);
+        source = marker;
+      } catch {
+        source = getSelectionFallbackNode();
+      }
+    }
+    source ||= getSelectionFallbackNode();
+    if (!source) return;
+    const id = ensureElementId(source, "selection");
+    applyTranslationAfterNode(source, text, id);
+    window.getSelection()?.removeAllRanges();
+  }
+
+  function getSelectionFallbackNode() {
+    const node = lastSelectionRange?.commonAncestorContainer;
+    const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+    return element?.closest(TRANSLATABLE_SELECTOR) || element;
+  }
+
+  function applyTranslationAfterNode(node, text, id) {
+    node.classList.add("custom-ai-assistant-translated-original");
+    node.dataset.customAiTranslationId = id;
+
+    let translation = document.querySelector(`.custom-ai-assistant-inline-translation[data-custom-ai-source-id="${id}"]`);
+    if (!translation) {
+      const tagName = node.tagName.toLowerCase();
+      translation = document.createElement(tagName === "li" ? "li" : tagName === "span" ? "span" : "div");
+      translation.className = "custom-ai-assistant-inline-translation";
+      translation.dataset.customAiSourceId = id;
+      node.insertAdjacentElement("afterend", translation);
+    }
+    translation.textContent = text;
+  }
+
+  function setTranslationsHidden(hidden) {
+    document.documentElement.classList.toggle("custom-ai-assistant-hide-translations", hidden);
+  }
+
+  function clearTranslations() {
+    for (const node of document.querySelectorAll(".custom-ai-assistant-inline-translation")) {
+      node.remove();
+    }
+    for (const node of document.querySelectorAll(".custom-ai-assistant-translated-original")) {
+      node.classList.remove("custom-ai-assistant-translated-original");
+      delete node.dataset.customAiTranslationId;
+    }
+    setTranslationsHidden(false);
+  }
+
+  function findTranslationSource(id) {
+    for (const node of document.querySelectorAll("[data-custom-ai-translation-id]")) {
+      if (node.dataset.customAiTranslationId === id) return node;
+    }
+    return null;
+  }
+
+  function clearPickerHighlight() {
+    highlightedPickNode?.classList.remove("custom-ai-assistant-pick-hover");
+    highlightedPickNode = null;
+  }
+
+  function buildElementLabel(node) {
+    const tag = node.tagName.toLowerCase();
+    const heading = node.querySelector?.("h1,h2,h3,h4")?.innerText?.trim();
+    const text = heading || normalizeText(node.innerText || node.textContent || "").slice(0, 48);
+    return `${tag}${text ? ` · ${text}` : ""}`;
+  }
+
+  function ensureElementId(node, prefix = "block") {
+    if (!node.dataset.customAiTranslationId) {
+      node.dataset.customAiTranslationId = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    return node.dataset.customAiTranslationId;
+  }
+
+  function isExtensionNode(node) {
+    return Boolean(node?.closest?.(`#${TOOLBAR_ID},#${SEARCH_PANEL_ID},#${LAUNCHER_ID},.custom-ai-assistant-inline-translation`));
+  }
+
+  function isVisible(node) {
+    const rect = node.getBoundingClientRect();
+    const style = window.getComputedStyle(node);
+    return rect.width > 0 &&
+      rect.height > 0 &&
+      style.visibility !== "hidden" &&
+      style.display !== "none" &&
+      Number(style.opacity || "1") > 0;
+  }
+
+  function normalizeText(text) {
+    return String(text || "").replace(/\s+/g, " ").trim();
   }
 
   function markEditable(event) {

@@ -77,6 +77,9 @@ async function handleMessage(message, sender) {
   }
 
   if (message?.type === "RUN_SELECTION_ACTION") {
+    if (sender.tab?.windowId) {
+      await chrome.sidePanel.open({ windowId: sender.tab.windowId });
+    }
     await sendToSidePanel({
       type: "SELECTION_ACTION",
       action: message.action,
@@ -87,6 +90,9 @@ async function handleMessage(message, sender) {
   }
 
   if (message?.type === "RUN_SEARCH_ACTION") {
+    if (sender.tab?.windowId) {
+      await chrome.sidePanel.open({ windowId: sender.tab.windowId });
+    }
     await sendToSidePanel({
       type: "SEARCH_ACTION",
       query: message.query,

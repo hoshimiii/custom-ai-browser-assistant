@@ -5,15 +5,19 @@ import { DEFAULT_SETTINGS, MESSAGE_LIMIT } from "../shared/defaults.js";
 import { buildSavedPageQuestionPrompt, searchSavedPages } from "../shared/library.js";
 import { buildPageQuestionPrompt, buildPageSummaryPrompt, buildSearchPrompt, buildSelectionPrompt, buildWritingPrompt } from "../shared/prompts.js";
 import { clearHistory, deleteSavedPage, getHistory, getSavedPages, getSettings, saveConversation, savePageSnapshot } from "../shared/storage.js";
+import { buildInlineTranslationPrompt, parseInlineTranslationResponse } from "../shared/translation.js";
 import { buildImageQuestionMessage } from "../shared/vision.js";
 
 const state = {
   settings: DEFAULT_SETTINGS,
   messages: [],
   currentTabId: null,
+  context: null,
+  pendingScreenshot: null,
   running: false,
   abort: null,
-  busyNoticeShown: false
+  busyNoticeShown: false,
+  clearHistoryArmed: false
 };
 
 const elements = {
@@ -27,6 +31,20 @@ const elements = {
   writingActions: document.getElementById("writingActions"),
   askScreenshot: document.getElementById("askScreenshot"),
   askPage: document.getElementById("askPage"),
+  selectRegion: document.getElementById("selectRegion"),
+  clearRegion: document.getElementById("clearRegion"),
+  contextMode: document.getElementById("contextMode"),
+  contextDetail: document.getElementById("contextDetail"),
+  refreshContext: document.getElementById("refreshContext"),
+  hideTranslations: document.getElementById("hideTranslations"),
+  showTranslations: document.getElementById("showTranslations"),
+  clearTranslations: document.getElementById("clearTranslations"),
+  screenshotPanel: document.getElementById("screenshotPanel"),
+  screenshotPreview: document.getElementById("screenshotPreview"),
+  sendScreenshotQuestion: document.getElementById("sendScreenshotQuestion"),
+  analyzeScreenshot: document.getElementById("analyzeScreenshot"),
+  retakeScreenshot: document.getElementById("retakeScreenshot"),
+  clearScreenshot: document.getElementById("clearScreenshot"),
   refreshHistory: document.getElementById("refreshHistory"),
   clearStoredHistory: document.getElementById("clearStoredHistory"),
   historyList: document.getElementById("historyList"),
@@ -46,8 +64,9 @@ async function init() {
   wireEvents();
   await renderHistory();
   await renderLibrary();
+  await refreshContextStatus();
   await consumePendingAction();
-  addMessage("assistant", "配置 API 后即可开始使用。可以直接聊天，也可以总结当前网页或处理选中文本。");
+  addMessage("assistant", "配置 API 后即可开始使用。直接输入问题会默认读取当前网页；也可以选择页面区域、截图问答或网页内翻译。");
 }
 
 function wireEvents() {
@@ -55,17 +74,46 @@ function wireEvents() {
   elements.composer.addEventListener("submit", async (event) => {
     event.preventDefault();
     const text = elements.promptInput.value.trim();
-    if (!text) return;
+    if (!text && !state.pendingScreenshot) return;
     elements.promptInput.value = "";
+    if (state.pendingScreenshot) {
+      await sendScreenshotQuestion(text);
+      return;
+    }
     await sendUserPrompt(text);
   });
   elements.askPage.addEventListener("click", async () => {
-    const question = elements.promptInput.value.trim() || window.prompt("请输入关于当前网页的问题");
-    if (question) await runPageQuestion(question);
+    const question = elements.promptInput.value.trim();
+    if (!question) {
+      addMessage("error", "请先在底部输入框输入关于当前网页的问题。");
+      elements.promptInput.focus();
+      return;
+    }
+    elements.promptInput.value = "";
+    await runPageQuestion(question);
   });
-  elements.askScreenshot.addEventListener("click", runScreenshotQuestion);
+  elements.askScreenshot.addEventListener("click", captureScreenshotForQuestion);
+  elements.sendScreenshotQuestion.addEventListener("click", async () => {
+    const question = elements.promptInput.value.trim();
+    if (!question) {
+      addMessage("error", "请先在底部输入框输入截图问题，或点击“直接分析”。");
+      elements.promptInput.focus();
+      return;
+    }
+    elements.promptInput.value = "";
+    await sendScreenshotQuestion(question);
+  });
+  elements.analyzeScreenshot.addEventListener("click", () => sendScreenshotQuestion(""));
+  elements.retakeScreenshot.addEventListener("click", captureScreenshotForQuestion);
+  elements.clearScreenshot.addEventListener("click", clearPendingScreenshot);
+  elements.refreshContext.addEventListener("click", refreshContextStatus);
+  elements.selectRegion.addEventListener("click", startElementPick);
+  elements.clearRegion.addEventListener("click", clearSelectedRegion);
+  elements.hideTranslations.addEventListener("click", () => sendActiveTabMessage({ type: "TOGGLE_TRANSLATIONS", hidden: true }));
+  elements.showTranslations.addEventListener("click", () => sendActiveTabMessage({ type: "TOGGLE_TRANSLATIONS", hidden: false }));
+  elements.clearTranslations.addEventListener("click", clearPageTranslations);
   elements.refreshHistory.addEventListener("click", renderHistory);
-  elements.clearStoredHistory.addEventListener("click", clearStoredHistory);
+  elements.clearStoredHistory.addEventListener("click", handleClearStoredHistory);
   elements.saveCurrentPage.addEventListener("click", saveCurrentPageToLibrary);
   elements.librarySearch.addEventListener("input", () => renderLibrary(elements.librarySearch.value));
   elements.clearChat.addEventListener("click", () => {
@@ -87,6 +135,27 @@ function wireEvents() {
     if (message?.type === "SEARCH_ACTION") {
       runSearchAction(message.query);
     }
+    if (message?.type === "REGION_PICK_STARTED") {
+      addMessage("assistant", "请在网页上移动鼠标选择区域，点击确认，按 Esc 取消。");
+    }
+    if (message?.type === "REGION_SELECTED") {
+      state.context = {
+        mode: "selected-region",
+        label: message.region?.label || "选中区域",
+        chars: message.region?.chars || 0
+      };
+      updateContextLabel();
+      addMessage("assistant", `已选择页面区域：${state.context.label}`);
+    }
+    if (message?.type === "REGION_CLEARED") {
+      refreshContextStatus();
+    }
+  });
+  chrome.tabs?.onActivated?.addListener(() => refreshContextStatus());
+  chrome.tabs?.onUpdated?.addListener((tabId, changeInfo) => {
+    if (tabId === state.currentTabId && changeInfo.status === "complete") {
+      refreshContextStatus();
+    }
   });
 }
 
@@ -100,20 +169,27 @@ async function consumePendingAction() {
 
 async function sendUserPrompt(text) {
   if (!ensureIdle()) return;
+  const page = await extractCurrentPage({ silent: true });
+  if (page?.text?.trim()) {
+    addMessage("user", `基于${formatPageScope(page)}提问：${text}`);
+    await askModel([{ role: "user", content: buildPageQuestionPrompt(page, text) }]);
+    return;
+  }
+  addMessage("error", "未能读取当前网页内容，本次将按普通聊天发送。可刷新网页或使用“选择区域”后重试。");
   addMessage("user", text);
   await askModel([{ role: "user", content: text }]);
 }
 
-async function runPageSummary() {
-  await runPageAction("summary");
-}
-
 async function runPageAction(actionId) {
   if (!ensureIdle()) return;
+  const action = findPageAction(actionId);
+  if (action.id === "translate-page") {
+    await runInlinePageTranslation();
+    return;
+  }
   const page = await extractCurrentPage();
   if (!page) return;
-  const action = findPageAction(actionId);
-  addMessage("user", action.label);
+  addMessage("user", `${action.label}（${formatPageScope(page)}）`);
   if (action.id === "summary") {
     await summarizePage(page);
   } else {
@@ -125,16 +201,45 @@ async function runPageQuestion(question) {
   if (!ensureIdle()) return;
   const page = await extractCurrentPage();
   if (!page) return;
-  addMessage("user", question);
+  addMessage("user", `基于${formatPageScope(page)}提问：${question}`);
   await askModel([{ role: "user", content: buildPageQuestionPrompt(page, question) }]);
 }
 
 async function runSelectionAction(action, selectionText) {
   if (!selectionText) return;
+  if (action === "translate") {
+    await translateSelectionInline(selectionText);
+    return;
+  }
   if (!ensureIdle()) return;
   const prompt = buildSelectionPrompt(action, selectionText, state.settings);
   addMessage("user", `处理选中文本：${action}`);
   await askModel([{ role: "user", content: prompt }]);
+}
+
+async function translateSelectionInline(selectionText) {
+  if (!ensureIdle()) return;
+  if (!beginTask()) return;
+  const abortController = new AbortController();
+  state.abort = () => abortController.abort();
+  try {
+    addMessage("user", "网页内翻译选中文本");
+    const translation = await requestChat(state.settings, buildMessages([
+      { role: "user", content: buildSelectionPrompt("translate", selectionText, state.settings) }
+    ]), { signal: abortController.signal });
+    await sendActiveTabMessage({ type: "APPLY_SELECTION_TRANSLATION", translation });
+    addMessage("assistant", translation || "(无内容)");
+    state.messages.push(
+      { role: "user", content: `翻译选中文本：${selectionText}` },
+      { role: "assistant", content: translation }
+    );
+    trimMessages();
+    await persist();
+  } catch (error) {
+    addMessage("error", `选中文本翻译失败：${error.message}`);
+  } finally {
+    endTask();
+  }
 }
 
 async function runSearchAction(query) {
@@ -144,9 +249,8 @@ async function runSearchAction(query) {
   await askModel([{ role: "user", content: buildSearchPrompt(query) }]);
 }
 
-async function runScreenshotQuestion() {
+async function captureScreenshotForQuestion() {
   if (!ensureIdle()) return;
-  const question = elements.promptInput.value.trim() || window.prompt("请输入关于当前截图的问题，可留空使用默认分析") || "";
   const tab = await getActiveTab();
   if (!tab?.windowId) {
     addMessage("error", "没有可截图的当前窗口。");
@@ -154,12 +258,39 @@ async function runScreenshotQuestion() {
   }
   try {
     const imageDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
-    const message = buildImageQuestionMessage(imageDataUrl, question);
-    addMessage("user", question ? `截图问答：${question}` : "分析当前截图");
-    await askModel([message]);
+    state.pendingScreenshot = imageDataUrl;
+    renderScreenshotPreview();
+    addMessage("assistant", "已截取当前可视页面。请在底部输入问题后发送，或点击“直接分析”。");
   } catch (error) {
     addMessage("error", `截图失败：${error.message}`);
   }
+}
+
+async function sendScreenshotQuestion(question) {
+  if (!state.pendingScreenshot) {
+    await captureScreenshotForQuestion();
+    if (!state.pendingScreenshot) return;
+  }
+  if (!ensureIdle()) return;
+  const message = buildImageQuestionMessage(state.pendingScreenshot, question);
+  addMessage("user", question ? `截图问答：${question}` : "分析当前截图");
+  await askModel([message]);
+  clearPendingScreenshot();
+}
+
+function renderScreenshotPreview() {
+  if (!state.pendingScreenshot) {
+    elements.screenshotPanel.hidden = true;
+    elements.screenshotPreview.removeAttribute("src");
+    return;
+  }
+  elements.screenshotPreview.src = state.pendingScreenshot;
+  elements.screenshotPanel.hidden = false;
+}
+
+function clearPendingScreenshot() {
+  state.pendingScreenshot = null;
+  renderScreenshotPreview();
 }
 
 async function saveCurrentPageToLibrary() {
@@ -181,10 +312,77 @@ async function runWritingHelp(action) {
     addMessage("error", "请先聚焦一个输入框，并确保其中有文本。");
     return;
   }
-  addMessage("user", "润色当前输入框文本");
-  const result = await requestChat(state.settings, buildMessages([{ role: "user", content: buildWritingPrompt(action, text, state.settings) }]));
-  await chrome.tabs.sendMessage(tab.id, { type: "REPLACE_ACTIVE_EDITABLE", text: result });
-  addMessage("assistant", result);
+  if (!beginTask()) return;
+  const abortController = new AbortController();
+  state.abort = () => abortController.abort();
+  try {
+    addMessage("user", "处理当前输入框文本");
+    const result = await requestChat(state.settings, buildMessages([
+      { role: "user", content: buildWritingPrompt(action, text, state.settings) }
+    ]), { signal: abortController.signal });
+    await chrome.tabs.sendMessage(tab.id, { type: "REPLACE_ACTIVE_EDITABLE", text: result });
+    addMessage("assistant", result);
+  } catch (error) {
+    addMessage("error", `写作辅助失败：${error.message}`);
+  } finally {
+    endTask();
+  }
+}
+
+async function runInlinePageTranslation() {
+  const tab = await getActiveTab();
+  if (!tab?.id) {
+    addMessage("error", "没有可翻译的当前标签页。");
+    return;
+  }
+  const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_TRANSLATABLE_BLOCKS", limit: 48 }).catch(() => null);
+  const blocks = response?.blocks || [];
+  if (!response?.ok || !blocks.length) {
+    addMessage("error", "未找到可翻译的网页正文块。可以先点击“选择区域”限定正文范围。");
+    return;
+  }
+
+  if (!beginTask()) return;
+  const abortController = new AbortController();
+  state.abort = () => abortController.abort();
+  const batches = buildTranslationBatches(blocks);
+  try {
+    addMessage("user", `网页内翻译（${response.context?.label || "当前网页"}，${blocks.length} 个文本块）`);
+    for (let index = 0; index < batches.length; index += 1) {
+      if (abortController.signal.aborted) throw new Error("已停止");
+      const batch = batches[index];
+      addMessage("assistant", `正在翻译第 ${index + 1}/${batches.length} 批，${batch.length} 个文本块。`);
+      const raw = await requestChat(state.settings, buildMessages([
+        { role: "user", content: buildInlineTranslationPrompt(batch, state.settings) }
+      ]), { signal: abortController.signal });
+      const translations = parseInlineTranslationResponse(raw);
+      await chrome.tabs.sendMessage(tab.id, { type: "APPLY_TRANSLATIONS", translations });
+      addMessage("assistant", `已写入第 ${index + 1}/${batches.length} 批译文。`);
+    }
+    addMessage("assistant", "网页内翻译完成。可使用“隐藏译文 / 显示译文 / 清除译文”控制页面显示。");
+  } catch (error) {
+    addMessage("error", `网页内翻译失败：${error.message}`);
+  } finally {
+    endTask();
+  }
+}
+
+function buildTranslationBatches(blocks) {
+  const batches = [];
+  let current = [];
+  let chars = 0;
+  for (const block of blocks) {
+    const length = block.text.length;
+    if (current.length && (current.length >= 8 || chars + length > 4200)) {
+      batches.push(current);
+      current = [];
+      chars = 0;
+    }
+    current.push(block);
+    chars += length;
+  }
+  if (current.length) batches.push(current);
+  return batches;
 }
 
 function renderActionButtons() {
@@ -211,9 +409,11 @@ async function askModel(newMessages) {
   if (!beginTask()) return;
   const abortController = new AbortController();
   state.abort = () => abortController.abort();
-
-  await askModelDuringTask(newMessages, abortController.signal);
-  endTask();
+  try {
+    await askModelDuringTask(newMessages, abortController.signal);
+  } finally {
+    endTask();
+  }
 }
 
 async function askModelDuringTask(newMessages, signal) {
@@ -241,15 +441,13 @@ async function askModelDuringTask(newMessages, signal) {
     if (!fullText) {
       assistantNode.querySelector(".content").textContent = "(无内容)";
     }
-    state.messages.push(...newMessages, { role: "assistant", content: fullText });
+    state.messages.push(...newMessages.map(sanitizeMessageForHistory), { role: "assistant", content: fullText });
     trimMessages();
     await persist();
   } catch (error) {
     assistantNode.classList.add("error");
     assistantNode.querySelector(".role").textContent = "ERROR";
     assistantNode.querySelector(".content").textContent = error.message;
-  } finally {
-    // Task lifecycle is controlled by the caller so chunked workflows can reuse it.
   }
 }
 
@@ -293,18 +491,94 @@ function buildMessages(newMessages) {
   ];
 }
 
-async function extractCurrentPage() {
+async function extractCurrentPage(options = {}) {
   const tab = await getActiveTab();
   if (!tab?.id) {
-    addMessage("error", "没有可读取的当前标签页。");
+    if (!options.silent) addMessage("error", "没有可读取的当前标签页。");
+    updateUnavailableContext("没有可读取的当前标签页");
     return null;
   }
+  state.currentTabId = tab.id;
   const response = await chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_PAGE" }).catch(() => null);
-  if (!response?.ok) {
-    addMessage("error", "无法读取当前页面。请刷新页面后重试。");
+  if (!response?.ok || !response.page?.text) {
+    if (!options.silent) addMessage("error", "无法读取当前页面。请刷新页面、换到普通网页，或使用“选择区域”后重试。");
+    updateUnavailableContext("无法读取当前页面");
     return null;
   }
+  state.context = {
+    mode: response.page.scope === "selected-region" ? "selected-region" : "page",
+    label: response.page.scope === "selected-region" ? response.page.selectedRegion?.label || "选中区域" : "当前网页",
+    chars: response.page.text.length,
+    title: response.page.title,
+    url: response.page.url,
+    pageType: response.page.type
+  };
+  updateContextLabel();
   return response.page;
+}
+
+async function refreshContextStatus() {
+  const tab = await getActiveTab();
+  if (!tab?.id) {
+    updateUnavailableContext("没有活动标签页");
+    return;
+  }
+  state.currentTabId = tab.id;
+  const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_CONTEXT_STATUS" }).catch(() => null);
+  if (!response?.ok) {
+    updateUnavailableContext("当前页面不可读取");
+    return;
+  }
+  state.context = response.context;
+  updateContextLabel();
+}
+
+function updateUnavailableContext(label) {
+  state.context = { mode: "unavailable", label, chars: 0 };
+  updateContextLabel();
+}
+
+function updateContextLabel() {
+  const context = state.context || { mode: "unknown", label: "未读取", chars: 0 };
+  const modeLabels = {
+    page: "上下文：当前网页",
+    "selected-region": "上下文：选中区域",
+    unavailable: "上下文：未读取网页",
+    unknown: "上下文：未读取"
+  };
+  elements.contextMode.textContent = modeLabels[context.mode] || "上下文：当前网页";
+  const detail = [
+    context.label,
+    context.pageType ? `类型：${context.pageType}` : "",
+    context.chars ? `${context.chars} 字符` : "",
+    context.title ? context.title : ""
+  ].filter(Boolean).join(" · ");
+  elements.contextDetail.textContent = detail;
+  elements.clearRegion.disabled = state.running || context.mode !== "selected-region";
+}
+
+async function startElementPick() {
+  const response = await sendActiveTabMessage({ type: "START_ELEMENT_PICK" });
+  if (!response?.ok) {
+    addMessage("error", "无法启动区域选择。请刷新页面或切换到普通网页后重试。");
+  }
+}
+
+async function clearSelectedRegion() {
+  await sendActiveTabMessage({ type: "CLEAR_SELECTED_REGION" });
+  await refreshContextStatus();
+  addMessage("assistant", "已取消选中区域，后续将使用当前网页上下文。");
+}
+
+async function clearPageTranslations() {
+  await sendActiveTabMessage({ type: "CLEAR_TRANSLATIONS" });
+  addMessage("assistant", "已清除当前页面译文。");
+}
+
+async function sendActiveTabMessage(message) {
+  const tab = await getActiveTab();
+  if (!tab?.id) return null;
+  return chrome.tabs.sendMessage(tab.id, message).catch(() => null);
 }
 
 async function getActiveTab() {
@@ -312,14 +586,41 @@ async function getActiveTab() {
   return tabs[0];
 }
 
+function formatPageScope(page) {
+  return page.scope === "selected-region" ? "选中区域" : "当前网页";
+}
+
 function addMessage(role, content) {
   const node = elements.template.content.firstElementChild.cloneNode(true);
   node.classList.add(role);
   node.querySelector(".role").textContent = role.toUpperCase();
-  node.querySelector(".content").textContent = content;
+  node.querySelector(".content").textContent = formatMessageContent(content);
   elements.messages.appendChild(node);
   scrollToBottom();
   return node;
+}
+
+function formatMessageContent(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (part?.type === "text") return part.text;
+        if (part?.type === "image_url") return "[截图]";
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  return String(content || "");
+}
+
+function sanitizeMessageForHistory(message) {
+  if (!Array.isArray(message?.content)) return message;
+  return {
+    ...message,
+    content: formatMessageContent(message.content)
+  };
 }
 
 function trimMessages() {
@@ -331,7 +632,7 @@ function trimMessages() {
 async function persist() {
   if (!state.settings.saveHistory) return;
   await saveConversation({
-    title: state.messages.find((message) => message.role === "user")?.content?.slice(0, 40) || "Conversation",
+    title: formatMessageContent(state.messages.find((message) => message.role === "user")?.content).slice(0, 40) || "Conversation",
     messages: state.messages
   });
   await renderHistory();
@@ -378,6 +679,7 @@ function setControlsDisabled(disabled) {
   }
   elements.promptInput.disabled = disabled;
   elements.librarySearch.disabled = disabled;
+  updateContextLabel();
 }
 
 async function renderHistory() {
@@ -399,8 +701,19 @@ async function renderHistory() {
   }
 }
 
-async function clearStoredHistory() {
-  if (!window.confirm("确定清空本地会话历史吗？")) return;
+async function handleClearStoredHistory() {
+  if (!state.clearHistoryArmed) {
+    state.clearHistoryArmed = true;
+    elements.clearStoredHistory.textContent = "再次点击确认";
+    addMessage("assistant", "再次点击“再次点击确认”会清空本地会话历史。");
+    window.setTimeout(() => {
+      state.clearHistoryArmed = false;
+      elements.clearStoredHistory.textContent = "清空记录";
+    }, 5000);
+    return;
+  }
+  state.clearHistoryArmed = false;
+  elements.clearStoredHistory.textContent = "清空记录";
   await clearHistory();
   await renderHistory();
   addMessage("assistant", "本地会话历史已清空。");
@@ -419,8 +732,13 @@ async function renderLibrary(query = "") {
     button.textContent = `${page.type || "page"} · ${page.title || "Untitled"}`;
     button.title = page.url || page.title || "";
     button.addEventListener("click", async () => {
-      const question = elements.promptInput.value.trim() || window.prompt("基于这条保存资料提问");
-      if (!question) return;
+      const question = elements.promptInput.value.trim();
+      if (!question) {
+        addMessage("error", "请先在底部输入框输入资料库问题。");
+        elements.promptInput.focus();
+        return;
+      }
+      elements.promptInput.value = "";
       addMessage("user", `资料库问答：${question}`);
       await askModel([{ role: "user", content: buildSavedPageQuestionPrompt(page, question) }]);
     });

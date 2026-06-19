@@ -6,11 +6,12 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 
 ## Features
 
-- Side panel chat with streaming responses.
+- Side panel chat with streaming responses and default current-page context.
 - Configurable OpenAI-compatible `Base URL`, `API Key`, and `Model`.
 - Current page summarization and question answering.
 - Action center for page analysis and writing tasks.
-- Page-level translation and rewriting.
+- Monica-style in-page translation that underlines original text and inserts translated text below it.
+- Page region picker for narrowing Q&A and translation to a selected DOM area.
 - Selected-text actions: explain, translate, summarize, rewrite.
 - Right-click context menu actions.
 - Search result assistant panel for Google and Bing.
@@ -24,7 +25,7 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - Provider presets for OpenAI, OpenRouter, Ollama, LM Studio, and One API/New API style gateways.
 - YouTube-aware extraction for title, channel, description, visible transcript, and page text.
 - PDF page detection with graceful fallback text handling.
-- Screenshot Q&A for vision-capable OpenAI-compatible models.
+- Screenshot Q&A with automatic visible-tab capture and side panel preview for vision-capable OpenAI-compatible models.
 
 ## Install Locally
 
@@ -57,6 +58,8 @@ Default shortcuts:
 Ctrl+Shift+M: Open assistant
 Ctrl+Shift+S: Summarize current page
 ```
+
+The shortcuts are also shown in the side panel and options page. Chrome shortcut conflicts can be changed at `chrome://extensions/shortcuts`.
 
 ## Configure
 

@@ -19,6 +19,7 @@ const requiredSourceFiles = [
   ".github/workflows/ci.yml",
   "docs/IMPLEMENTATION_PLAN.md",
   "docs/GITHUB_SETUP.md",
+  "docs/CUSTOMER_FEEDBACK.md",
   "docs/PRIVACY.md",
   "src/shared/apiClient.js",
   "src/shared/actions.js",
@@ -26,6 +27,7 @@ const requiredSourceFiles = [
   "src/shared/chunking.js",
   "src/shared/library.js",
   "src/shared/pageTypes.js",
+  "src/shared/translation.js",
   "src/shared/vision.js"
 ];
 
