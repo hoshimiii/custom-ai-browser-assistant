@@ -1,6 +1,7 @@
 (() => {
   const TOOLBAR_ID = "custom-ai-assistant-selection-toolbar";
   const SEARCH_PANEL_ID = "custom-ai-assistant-search-panel";
+  const LAUNCHER_ID = "custom-ai-assistant-launcher";
   let lastSelection = "";
 
   document.addEventListener("mouseup", handleSelection);
@@ -26,6 +27,7 @@
   });
 
   maybeInjectSearchPanel();
+  injectFloatingLauncher();
 
   function extractPage() {
     const type = detectPageType(location.href, document.contentType);
@@ -184,6 +186,23 @@
     });
     const target = document.querySelector("main") || document.body;
     target.prepend(panel);
+  }
+
+  function injectFloatingLauncher() {
+    if (document.getElementById(LAUNCHER_ID)) return;
+    const launcher = document.createElement("button");
+    launcher.id = LAUNCHER_ID;
+    launcher.type = "button";
+    launcher.setAttribute("aria-label", "Open AI Assistant");
+    launcher.title = "Open AI Assistant";
+    launcher.innerHTML = `
+      <span class="caa-launcher-mark" aria-hidden="true">AI</span>
+      <span class="caa-launcher-dot" aria-hidden="true"></span>
+    `;
+    launcher.addEventListener("click", () => {
+      chrome.runtime.sendMessage({ type: "OPEN_SIDE_PANEL" });
+    });
+    document.documentElement.appendChild(launcher);
   }
 
   function extractSearchQuery(url) {
