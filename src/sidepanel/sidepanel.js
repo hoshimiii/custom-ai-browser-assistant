@@ -642,8 +642,7 @@ async function persist() {
 }
 
 function scrollToBottom() {
-  const scroller = elements.workspace || elements.messages;
-  scroller.scrollTop = scroller.scrollHeight;
+  elements.messages.scrollTop = elements.messages.scrollHeight;
 }
 
 function updateModelLabel() {
