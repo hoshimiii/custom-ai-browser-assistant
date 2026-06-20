@@ -22,6 +22,7 @@ const state = {
 
 const elements = {
   modelLabel: document.getElementById("modelLabel"),
+  workspace: document.querySelector(".workspace"),
   messages: document.getElementById("messages"),
   template: document.getElementById("messageTemplate"),
   composer: document.getElementById("composer"),
@@ -390,6 +391,7 @@ function renderActionButtons() {
   for (const action of PAGE_ACTIONS) {
     const button = document.createElement("button");
     button.type = "button";
+    button.dataset.actionId = action.id;
     button.textContent = action.label;
     button.addEventListener("click", () => runPageAction(action.id));
     elements.pageActions.append(button);
@@ -399,6 +401,7 @@ function renderActionButtons() {
   for (const action of WRITING_ACTIONS) {
     const button = document.createElement("button");
     button.type = "button";
+    button.dataset.actionId = action.id;
     button.textContent = action.label;
     button.addEventListener("click", () => runWritingHelp(action.id));
     elements.writingActions.append(button);
@@ -639,7 +642,8 @@ async function persist() {
 }
 
 function scrollToBottom() {
-  elements.messages.scrollTop = elements.messages.scrollHeight;
+  const scroller = elements.workspace || elements.messages;
+  scroller.scrollTop = scroller.scrollHeight;
 }
 
 function updateModelLabel() {
