@@ -2,6 +2,10 @@
   const TOOLBAR_ID = "custom-ai-assistant-selection-toolbar";
   const SEARCH_PANEL_ID = "custom-ai-assistant-search-panel";
   const LAUNCHER_ID = "custom-ai-assistant-launcher";
+  const QUICK_RAIL_ID = "custom-ai-assistant-quick-rail";
+  const FLOATING_CHAT_CLASS = "custom-ai-assistant-floating-chat";
+  const SESSION_PICKER_CLASS = "custom-ai-assistant-session-picker";
+  const FLOATING_CHAT_IDLE_MS = 5 * 60 * 1000;
   const TRANSLATABLE_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,figcaption,td,th,dd,dt,summary";
   const CONTAINER_SELECTOR = "article,main,[role='main'],section,div";
   const SKIP_SELECTOR = [
@@ -26,6 +30,9 @@
     `#${TOOLBAR_ID}`,
     `#${SEARCH_PANEL_ID}`,
     `#${LAUNCHER_ID}`,
+    `#${QUICK_RAIL_ID}`,
+    `.${FLOATING_CHAT_CLASS}`,
+    `.${SESSION_PICKER_CLASS}`,
     ".custom-ai-assistant-inline-translation"
   ].join(",");
 
@@ -34,6 +41,7 @@
   let selectedRegion = null;
   let pickMode = false;
   let highlightedPickNode = null;
+  const floatingCompressionTimers = new Map();
 
   document.addEventListener("mouseup", handleSelection);
   document.addEventListener("keyup", handleSelection);
@@ -253,11 +261,17 @@
         <button data-action="summarize">总结</button>
         <button data-action="rewrite">改写</button>
         <button data-action="continue">续写</button>
+        <button data-action="floating-chat">对话</button>
       `;
       toolbar.addEventListener("mousedown", (event) => event.preventDefault());
       toolbar.addEventListener("click", (event) => {
         const button = event.target.closest("button[data-action]");
         if (!button) return;
+        if (button.dataset.action === "floating-chat") {
+          openFloatingChatFromSelection(rect);
+          hideToolbar();
+          return;
+        }
         chrome.runtime.sendMessage({
           type: "RUN_SELECTION_ACTION",
           action: button.dataset.action,
@@ -298,6 +312,7 @@
 
   function injectFloatingLauncher() {
     if (document.getElementById(LAUNCHER_ID)) return;
+    injectQuickRail();
     const launcher = document.createElement("button");
     launcher.id = LAUNCHER_ID;
     launcher.type = "button";
@@ -311,6 +326,338 @@
       chrome.runtime.sendMessage({ type: "OPEN_SIDE_PANEL" });
     });
     document.documentElement.appendChild(launcher);
+  }
+
+  function injectQuickRail() {
+    if (document.getElementById(QUICK_RAIL_ID)) return;
+    const rail = document.createElement("div");
+    rail.id = QUICK_RAIL_ID;
+    rail.innerHTML = `
+      <button type="button" data-floating-action="chat" title="页面浮窗对话" aria-label="页面浮窗对话">问</button>
+      <button type="button" data-floating-action="screenshot" title="截图浮窗问答" aria-label="截图浮窗问答">图</button>
+    `;
+    rail.addEventListener("click", async (event) => {
+      const button = event.target.closest("button[data-floating-action]");
+      if (!button) return;
+      if (button.dataset.floatingAction === "chat") {
+        await openFloatingSessionPicker(button.getBoundingClientRect());
+      }
+      if (button.dataset.floatingAction === "screenshot") {
+        await openFloatingChatFromScreenshot(button.getBoundingClientRect());
+      }
+    });
+    document.documentElement.appendChild(rail);
+  }
+
+  async function openFloatingChatFromSelection() {
+    const rect = lastSelectionRange?.getBoundingClientRect() || {
+      left: window.innerWidth - 380,
+      right: window.innerWidth - 16,
+      top: window.innerHeight - 120,
+      bottom: window.innerHeight - 96
+    };
+    await openFloatingChat({
+      type: "selection",
+      label: "选中文本",
+      title: document.title,
+      text: lastSelection
+    }, rect);
+  }
+
+  async function openFloatingChatFromScreenshot(anchorRect) {
+    const response = await chrome.runtime.sendMessage({ type: "CAPTURE_VISIBLE_TAB" }).catch((error) => ({
+      ok: false,
+      error: error.message
+    }));
+    if (!response?.ok || !response.imageDataUrl) {
+      await openFloatingChat({
+        type: "page",
+        label: "截图失败",
+        title: document.title,
+        text: `截图失败：${response?.error || "无法截取当前页面"}`
+      }, anchorRect);
+      return;
+    }
+    await openFloatingChat({
+      type: "screenshot",
+      label: "当前页面截图",
+      title: document.title,
+      text: "当前网页可视区域截图",
+      imageDataUrl: response.imageDataUrl,
+      hasImage: true
+    }, anchorRect);
+  }
+
+  async function openFloatingSessionPicker(anchorRect) {
+    const loaded = await chrome.runtime.sendMessage({
+      type: "FLOATING_CHAT_LOAD",
+      pageUrl: location.href
+    }).catch(() => ({ ok: false, sessions: [] }));
+    const sessions = loaded?.sessions || [];
+    if (!sessions.length) {
+      await openFloatingChat(buildPageFloatingSource(), anchorRect);
+      return;
+    }
+
+    const picker = document.createElement("section");
+    picker.className = "custom-ai-assistant-session-picker";
+    picker.innerHTML = `
+      <header>
+        <strong>当前网页会话</strong>
+        <button type="button" data-picker-action="close">关闭</button>
+      </header>
+      <div class="caa-session-picker-list"></div>
+      <button type="button" class="caa-session-picker-new" data-picker-action="new">新建会话</button>
+    `;
+    const list = picker.querySelector(".caa-session-picker-list");
+    for (const session of sessions.slice(0, 6)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.sessionId = session.id;
+      button.textContent = `${session.title || "浮窗会话"} · ${new Date(session.updatedAt || session.createdAt || Date.now()).toLocaleString()}`;
+      button.addEventListener("click", async () => {
+        picker.remove();
+        await openFloatingChat(session.source || buildPageFloatingSource(), anchorRect, session);
+      });
+      list.append(button);
+    }
+    picker.querySelector("[data-picker-action='close']").addEventListener("click", () => picker.remove());
+    picker.querySelector("[data-picker-action='new']").addEventListener("click", async () => {
+      picker.remove();
+      await openFloatingChat(buildPageFloatingSource(), anchorRect);
+    });
+    document.documentElement.appendChild(picker);
+    placeFloatingDialog(picker, anchorRect);
+  }
+
+  async function openFloatingChat(source, anchorRect, existingSession = null) {
+    const start = existingSession ? { ok: true, session: existingSession } : await chrome.runtime.sendMessage({
+      type: "FLOATING_CHAT_START",
+      pageUrl: location.href,
+      pageTitle: document.title,
+      source: serializeFloatingSource(source)
+    }).catch((error) => ({ ok: false, error: error.message }));
+
+    const dialog = createFloatingChatDialog(source, start?.session);
+    document.documentElement.appendChild(dialog);
+    placeFloatingDialog(dialog, anchorRect);
+    enableFloatingDialogDrag(dialog);
+
+    if (!start?.ok) {
+      addFloatingChatMessage(dialog, "error", start?.error || "无法创建浮窗会话");
+      return;
+    }
+    renderFloatingSessionMessages(dialog, start.session);
+    scheduleFloatingCompression(start.session.id);
+    dialog.querySelector("textarea").focus();
+  }
+
+  function buildPageFloatingSource() {
+    return {
+      type: "page",
+      label: "当前网页",
+      title: document.title,
+      text: collectReadableText()
+    };
+  }
+
+  function createFloatingChatDialog(source, session) {
+    const dialog = document.createElement("section");
+    dialog.className = FLOATING_CHAT_CLASS;
+    dialog.dataset.sessionId = session?.id || "";
+    dialog.innerHTML = `
+      <header class="caa-floating-chat-header">
+        <div>
+          <strong>${escapeHtml(session?.title || source.label || "浮窗会话")}</strong>
+          <span>${escapeHtml(buildFloatingSourceLabel(source))}</span>
+        </div>
+        <div class="caa-floating-chat-controls">
+          <button type="button" data-floating-control="new">新会话</button>
+          <button type="button" data-floating-control="minimize">收起</button>
+          <button type="button" data-floating-control="close">关闭</button>
+        </div>
+      </header>
+      <div class="caa-floating-chat-source">${buildFloatingSourcePreview(source)}</div>
+      <div class="caa-floating-chat-messages" role="log" aria-live="polite"></div>
+      <form class="caa-floating-chat-form">
+        <textarea rows="2" placeholder="基于这个选区、截图或网页继续提问"></textarea>
+        <button type="submit">发送</button>
+      </form>
+    `;
+
+    dialog.querySelector("[data-floating-control='close']").addEventListener("click", () => dialog.remove());
+    dialog.querySelector("[data-floating-control='minimize']").addEventListener("click", () => {
+      dialog.classList.toggle("is-minimized");
+    });
+    dialog.querySelector("[data-floating-control='new']").addEventListener("click", () => {
+      const rect = dialog.getBoundingClientRect();
+      openFloatingChat(source, rect);
+    });
+    dialog.querySelector("form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const input = dialog.querySelector("textarea");
+      const prompt = input.value.trim();
+      if (!prompt) return;
+      input.value = "";
+      await sendFloatingChatPrompt(dialog, source, prompt);
+    });
+    return dialog;
+  }
+
+  async function sendFloatingChatPrompt(dialog, source, prompt) {
+    const sessionId = dialog.dataset.sessionId;
+    if (!sessionId) {
+      addFloatingChatMessage(dialog, "error", "浮窗会话尚未初始化。");
+      return;
+    }
+    addFloatingChatMessage(dialog, "user", prompt);
+    const pending = addFloatingChatMessage(dialog, "assistant", "正在思考...");
+    setFloatingChatBusy(dialog, true);
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "FLOATING_CHAT_MESSAGE",
+        sessionId,
+        pageUrl: location.href,
+        pageTitle: document.title,
+        source: serializeFloatingSource(source),
+        prompt
+      });
+      if (!response?.ok) {
+        throw new Error(response?.error || "请求失败");
+      }
+      pending.querySelector(".caa-floating-chat-bubble").textContent = response.answer || "(无内容)";
+      dialog.dataset.sessionId = response.session?.id || sessionId;
+      scheduleFloatingCompression(dialog.dataset.sessionId);
+    } catch (error) {
+      pending.classList.add("error");
+      pending.querySelector(".caa-floating-chat-role").textContent = "ERROR";
+      pending.querySelector(".caa-floating-chat-bubble").textContent = error.message;
+    } finally {
+      setFloatingChatBusy(dialog, false);
+    }
+  }
+
+  function addFloatingChatMessage(dialog, role, content) {
+    const row = document.createElement("article");
+    row.className = `caa-floating-chat-message ${role}`;
+    row.innerHTML = `
+      <div class="caa-floating-chat-role">${escapeHtml(role.toUpperCase())}</div>
+      <div class="caa-floating-chat-bubble"></div>
+    `;
+    row.querySelector(".caa-floating-chat-bubble").textContent = content;
+    const list = dialog.querySelector(".caa-floating-chat-messages");
+    list.append(row);
+    list.scrollTop = list.scrollHeight;
+    return row;
+  }
+
+  function renderFloatingSessionMessages(dialog, session) {
+    const list = dialog.querySelector(".caa-floating-chat-messages");
+    list.textContent = "";
+    if (session?.memorySummary) {
+      addFloatingChatMessage(dialog, "memory", `已载入压缩记忆：${session.memorySummary}`);
+    }
+    for (const message of session?.messages || []) {
+      addFloatingChatMessage(dialog, message.role, message.content);
+    }
+    if (!session?.messages?.length) {
+      addFloatingChatMessage(dialog, "assistant", "已创建独立浮窗会话。这个会话会按当前网页保存，5 分钟空闲后自动压缩记忆。");
+    }
+  }
+
+  function setFloatingChatBusy(dialog, busy) {
+    dialog.querySelector("textarea").disabled = busy;
+    dialog.querySelector("button[type='submit']").disabled = busy;
+  }
+
+  function scheduleFloatingCompression(sessionId) {
+    if (!sessionId) return;
+    window.clearTimeout(floatingCompressionTimers.get(sessionId));
+    floatingCompressionTimers.set(sessionId, window.setTimeout(() => {
+      chrome.runtime.sendMessage({ type: "FLOATING_CHAT_COMPRESS", sessionId }).catch(() => {});
+      floatingCompressionTimers.delete(sessionId);
+    }, FLOATING_CHAT_IDLE_MS));
+  }
+
+  function serializeFloatingSource(source) {
+    return {
+      type: source.type || "page",
+      label: source.label || "",
+      title: source.title || document.title,
+      text: source.text || "",
+      hasImage: Boolean(source.hasImage || source.imageDataUrl),
+      imageDataUrl: source.imageDataUrl || ""
+    };
+  }
+
+  function buildFloatingSourceLabel(source) {
+    if (source.type === "screenshot") return "截图 · 当前页面";
+    if (source.type === "selection") return "选区 · 当前页面";
+    return "网页 · 当前页面";
+  }
+
+  function buildFloatingSourcePreview(source) {
+    if (source.type === "screenshot" && source.imageDataUrl) {
+      return `<img src="${source.imageDataUrl}" alt="当前页面截图">`;
+    }
+    const text = String(source.text || "").trim();
+    return `<blockquote>${escapeHtml(text.slice(0, 420) || "当前网页上下文")}</blockquote>`;
+  }
+
+  function placeFloatingDialog(dialog, anchorRect) {
+    const width = Math.min(380, window.innerWidth - 16);
+    const estimatedHeight = Math.min(520, window.innerHeight - 24);
+    const left = clamp(anchorRect.left, 8, window.innerWidth - width - 8);
+    const top = anchorRect.bottom + 10;
+    dialog.style.width = `${width}px`;
+    dialog.style.left = `${left}px`;
+    dialog.style.right = "auto";
+    dialog.style.bottom = "auto";
+    if (top + estimatedHeight > window.innerHeight - 8) {
+      dialog.style.top = "auto";
+      dialog.style.bottom = "72px";
+    } else {
+      dialog.style.top = `${Math.max(8, top)}px`;
+    }
+  }
+
+  function enableFloatingDialogDrag(dialog) {
+    const header = dialog.querySelector(".caa-floating-chat-header");
+    let start = null;
+    header.addEventListener("mousedown", (event) => {
+      if (event.target.closest("button")) return;
+      const rect = dialog.getBoundingClientRect();
+      start = {
+        x: event.clientX,
+        y: event.clientY,
+        left: rect.left,
+        top: rect.top
+      };
+      event.preventDefault();
+    });
+    document.addEventListener("mousemove", (event) => {
+      if (!start) return;
+      const width = dialog.offsetWidth;
+      const height = dialog.offsetHeight;
+      dialog.style.left = `${clamp(start.left + event.clientX - start.x, 8, window.innerWidth - width - 8)}px`;
+      dialog.style.top = `${clamp(start.top + event.clientY - start.y, 8, window.innerHeight - height - 8)}px`;
+      dialog.style.bottom = "auto";
+    });
+    document.addEventListener("mouseup", () => {
+      start = null;
+    });
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), Math.max(min, max));
+  }
+
+  function escapeHtml(value) {
+    return String(value || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
   }
 
   function extractSearchQuery(url) {
@@ -567,7 +914,7 @@
   }
 
   function isExtensionNode(node) {
-    return Boolean(node?.closest?.(`#${TOOLBAR_ID},#${SEARCH_PANEL_ID},#${LAUNCHER_ID},.custom-ai-assistant-inline-translation`));
+    return Boolean(node?.closest?.(`#${TOOLBAR_ID},#${SEARCH_PANEL_ID},#${LAUNCHER_ID},#${QUICK_RAIL_ID},.${FLOATING_CHAT_CLASS},.${SESSION_PICKER_CLASS},.custom-ai-assistant-inline-translation`));
   }
 
   function isVisible(node) {

@@ -7,6 +7,7 @@ This project aims to cover the most common Monica-like browser assistant workflo
 | Area | MVP Status | Notes |
 | --- | --- | --- |
 | Side panel chat | Implemented | Streaming and non-streaming OpenAI-compatible chat; ordinary sends default to current page or selected-region context. |
+| In-page floating chat | Implemented | Selection, page, and screenshot triggers open independent floating chat windows near the source; sessions are stored per webpage. |
 | Action center | Implemented | Central registry for page, selection, and writing workflows. |
 | Custom model config | Implemented | BYOK Base URL, API Key, model, timeout, system prompt. |
 | Page summary | Implemented | Reads active page text through content script. |
@@ -18,7 +19,7 @@ This project aims to cover the most common Monica-like browser assistant workflo
 | Writing assistant | Implemented | Polishes focused editable fields and writes result back. |
 | Local history | Partial | Saves recent conversations, shows a compact history list, and supports clearing stored history. |
 | Saved-page library | Implemented | Saves active pages, searches local snapshots, asks questions grounded in saved content, and deletes saved pages. |
-| Backup/restore | Implemented | Options page exports/imports settings, history, and saved pages as JSON. |
+| Backup/restore | Implemented | Options page exports/imports settings, history, saved pages, and floating page chat sessions as JSON. |
 | Screenshot Q&A | Implemented | Captures the visible tab, previews it in the side panel, then sends an OpenAI-compatible image message to vision-capable models. |
 | Long page chunking | Implemented | Splits long pages, summarizes chunks, then synthesizes final summary. |
 | Provider presets | Implemented | OpenAI, OpenRouter, Ollama, LM Studio, One API/New API, custom. |
@@ -31,8 +32,8 @@ This project aims to cover the most common Monica-like browser assistant workflo
 
 The extension is split into browser-facing modules and pure shared modules:
 
-- `src/background.js`: side panel opening, context menus, keyboard commands, message routing.
-- `src/content/contentScript.js`: page extraction, selected-text toolbar, search panel, editable-field operations, region picking, and in-page translation DOM updates.
+- `src/background.js`: side panel opening, context menus, keyboard commands, floating chat model requests, screenshot capture, and message routing.
+- `src/content/contentScript.js`: page extraction, selected-text toolbar, search panel, editable-field operations, region picking, in-page translation DOM updates, and floating chat UI.
 - `src/sidepanel/*`: chat UI and page/selection/search/writing workflows.
 - `src/options/*`: BYOK configuration.
 - `src/shared/*`: API client, prompts, text processing, storage helpers.

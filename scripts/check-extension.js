@@ -17,6 +17,7 @@ const required = [
   "src/shared/actions.js",
   "src/shared/backup.js",
   "src/shared/chunking.js",
+  "src/shared/floatingMemory.js",
   "src/shared/library.js",
   "src/shared/pageTypes.js",
   "src/shared/providers.js",

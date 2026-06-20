@@ -14,6 +14,7 @@ Depending on the user action, the request may include:
 
 - Chat messages typed into the side panel.
 - Current page or selected-region text when the user sends a side panel question from a webpage.
+- Current page, selected text, or screenshot context when the user sends a message from an in-page floating chat window.
 - Selected text from the active page.
 - Extracted text from the active page.
 - YouTube page metadata, description, visible transcript, and visible page text.
@@ -21,7 +22,7 @@ Depending on the user action, the request may include:
 - Screenshot image data when the user clicks screenshot Q&A.
 - Saved-page library snapshots when the user asks questions against saved content.
 
-No page content is sent automatically on page load. User action is required. When the user sends a side panel question on a readable webpage, the extension includes the current page or selected-region context by default.
+No page content is sent automatically on page load. User action is required. When the user sends a side panel or floating-chat question on a readable webpage, the extension includes the current page, selected-region, selected-text, or screenshot context for that action.
 
 ## Local Storage
 
@@ -30,6 +31,7 @@ The extension stores the following data in `chrome.storage.local`:
 - API settings, including Base URL, API Key, model name, system prompt, and preferences.
 - Recent conversation history, if enabled.
 - Saved-page library snapshots.
+- In-page floating chat sessions, grouped by webpage URL. These store source metadata, text excerpts, chat messages, and compressed memory summaries. Screenshot image data is used for the model request but is not stored in floating session memory.
 
 Users can export or import this data from the options page. Backups do not include the API key by default; exporting the API key requires explicitly enabling the API-key checkbox. Users can also clear stored conversation history and delete saved pages from the side panel.
 

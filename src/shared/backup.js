@@ -9,7 +9,8 @@ export function createBackupPayload(data, exportedAt = new Date().toISOString(),
     app: "custom-ai-browser-assistant",
     settings: normalizeSettingsForBackup(data.settings || {}, options),
     history: Array.isArray(data.history) ? data.history : [],
-    savedPages: Array.isArray(data.savedPages) ? data.savedPages : []
+    savedPages: Array.isArray(data.savedPages) ? data.savedPages : [],
+    floatingSessions: Array.isArray(data.floatingSessions) ? data.floatingSessions : []
   };
 }
 
@@ -36,7 +37,8 @@ export function mergeBackupPayload(current, backup, mode = "merge") {
   return createBackupPayload({
     settings: mergedSettings,
     history: mergeById(current.history || [], parsed.history || []),
-    savedPages: mergeById(current.savedPages || [], parsed.savedPages || [])
+    savedPages: mergeById(current.savedPages || [], parsed.savedPages || []),
+    floatingSessions: mergeById(current.floatingSessions || [], parsed.floatingSessions || [])
   }, parsed.exportedAt, { includeApiKey: true });
 }
 

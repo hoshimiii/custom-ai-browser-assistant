@@ -7,6 +7,8 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 ## Features
 
 - Side panel chat with streaming responses and default current-page context.
+- In-page floating chat windows for selected text, current page, or visible-tab screenshots.
+- Multiple isolated floating chat sessions per webpage with local memory and idle compression.
 - Configurable OpenAI-compatible `Base URL`, `API Key`, and `Model`.
 - Current page summarization and question answering.
 - Action center for page analysis and writing tasks.
@@ -26,6 +28,7 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - YouTube-aware extraction for title, channel, description, visible transcript, and page text.
 - PDF page detection with graceful fallback text handling.
 - Screenshot Q&A with automatic visible-tab capture and side panel preview for vision-capable OpenAI-compatible models.
+- Screenshot Q&A can also start directly from the in-page quick rail and opens near the trigger position.
 
 ## Install Locally
 
@@ -50,7 +53,7 @@ npm run package
 
 The zip is written to `releases/custom-ai-browser-assistant.zip`.
 
-Backup data from the options page before moving browsers or machines. The JSON export includes settings, history, and saved pages.
+Backup data from the options page before moving browsers or machines. The JSON export includes settings, history, saved pages, and floating page chat sessions.
 
 Default shortcuts:
 

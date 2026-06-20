@@ -2,6 +2,7 @@
   position: absolute;
   z-index: 2147483647;
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 6px;
   border: 1px solid #d8dee4;
@@ -9,6 +10,36 @@
   background: #ffffff;
   box-shadow: 0 8px 28px rgba(27, 31, 36, 0.18);
   font-family: Arial, sans-serif;
+}
+
+#custom-ai-assistant-quick-rail {
+  position: fixed;
+  right: max(22px, calc(env(safe-area-inset-right) + 4px));
+  bottom: calc(max(18px, env(safe-area-inset-bottom)) + 56px);
+  z-index: 2147483645;
+  display: grid;
+  gap: 8px;
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+}
+
+#custom-ai-assistant-quick-rail button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(15, 118, 110, 0.24);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0f766e;
+  box-shadow: 0 10px 24px rgba(17, 24, 39, 0.16);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0;
+}
+
+#custom-ai-assistant-quick-rail button:hover {
+  background: #ecfdf5;
 }
 
 #custom-ai-assistant-selection-toolbar[hidden] {
@@ -120,9 +151,261 @@
 }
 
 @media print {
-  #custom-ai-assistant-launcher {
+  #custom-ai-assistant-launcher,
+  #custom-ai-assistant-quick-rail,
+  .custom-ai-assistant-floating-chat,
+  .custom-ai-assistant-session-picker {
     display: none;
   }
+}
+
+.custom-ai-assistant-floating-chat {
+  position: fixed;
+  z-index: 2147483646;
+  display: grid;
+  grid-template-rows: auto auto minmax(120px, 1fr) auto;
+  max-height: min(560px, calc(100vh - 24px));
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid #cfd8e3;
+  border-radius: 10px;
+  background: #f8fafc;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.24);
+  color: #17212b;
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+}
+
+.custom-ai-assistant-session-picker {
+  position: fixed;
+  z-index: 2147483646;
+  display: grid;
+  gap: 8px;
+  max-height: min(420px, calc(100vh - 24px));
+  overflow: auto;
+  border: 1px solid #cfd8e3;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.22);
+  color: #17212b;
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+  padding: 10px;
+}
+
+.custom-ai-assistant-session-picker header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.custom-ai-assistant-session-picker strong {
+  font-size: 13px;
+}
+
+.custom-ai-assistant-session-picker button {
+  border: 1px solid #d9e1e8;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #17212b;
+  cursor: pointer;
+  font: 12px/1.3 Arial, "Microsoft YaHei", sans-serif;
+  padding: 7px 8px;
+}
+
+.custom-ai-assistant-session-picker button:hover {
+  background: #eef2f6;
+}
+
+.caa-session-picker-list {
+  display: grid;
+  gap: 6px;
+}
+
+.caa-session-picker-list button {
+  max-width: 100%;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.caa-session-picker-new {
+  border-color: #0f766e !important;
+  background: #ecfdf5 !important;
+  color: #115e59 !important;
+  font-weight: 700 !important;
+}
+
+.custom-ai-assistant-floating-chat.is-minimized {
+  grid-template-rows: auto;
+  min-height: 0;
+}
+
+.custom-ai-assistant-floating-chat.is-minimized .caa-floating-chat-source,
+.custom-ai-assistant-floating-chat.is-minimized .caa-floating-chat-messages,
+.custom-ai-assistant-floating-chat.is-minimized .caa-floating-chat-form {
+  display: none;
+}
+
+.caa-floating-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid #d9e1e8;
+  background: #ffffff;
+  cursor: move;
+}
+
+.caa-floating-chat-header strong,
+.caa-floating-chat-header span {
+  display: block;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.caa-floating-chat-header strong {
+  color: #17212b;
+  font-size: 13px;
+}
+
+.caa-floating-chat-header span {
+  margin-top: 2px;
+  color: #64717f;
+  font-size: 11px;
+}
+
+.caa-floating-chat-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.caa-floating-chat-controls button,
+.caa-floating-chat-form button {
+  border: 1px solid #d9e1e8;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #17212b;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 7px;
+}
+
+.caa-floating-chat-controls button:hover,
+.caa-floating-chat-form button:hover {
+  background: #f1f5f9;
+}
+
+.caa-floating-chat-source {
+  max-height: 112px;
+  overflow: auto;
+  padding: 9px 10px;
+  border-bottom: 1px solid #d9e1e8;
+  background: #f8fafc;
+}
+
+.caa-floating-chat-source blockquote {
+  margin: 0;
+  padding: 8px 9px;
+  border-left: 3px solid #0f766e;
+  border-radius: 7px;
+  background: #ecfdf5;
+  color: #134e4a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.caa-floating-chat-source img {
+  display: block;
+  width: 100%;
+  max-height: 110px;
+  object-fit: contain;
+  border: 1px solid #d9e1e8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.caa-floating-chat-messages {
+  overflow: auto;
+  padding: 10px;
+}
+
+.caa-floating-chat-message {
+  margin-bottom: 9px;
+}
+
+.caa-floating-chat-role {
+  margin-bottom: 4px;
+  color: #64717f;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.caa-floating-chat-bubble {
+  border: 1px solid #d9e1e8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #17212b;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  padding: 8px 9px;
+  white-space: pre-wrap;
+}
+
+.caa-floating-chat-message.user .caa-floating-chat-bubble {
+  border-color: #bfdbfe;
+  background: #eef5ff;
+}
+
+.caa-floating-chat-message.memory .caa-floating-chat-bubble {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #7c2d12;
+}
+
+.caa-floating-chat-message.error .caa-floating-chat-bubble {
+  border-color: #fecaca;
+  background: #fff1f0;
+  color: #991b1b;
+}
+
+.caa-floating-chat-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid #d9e1e8;
+  background: #ffffff;
+}
+
+.caa-floating-chat-form textarea {
+  width: 100%;
+  min-height: 44px;
+  max-height: 120px;
+  resize: vertical;
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  color: #17212b;
+  font: 13px/1.45 Arial, "Microsoft YaHei", sans-serif;
+  padding: 8px;
+}
+
+.caa-floating-chat-form button {
+  min-width: 58px;
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #ffffff;
+}
+
+.caa-floating-chat-form button:disabled,
+.caa-floating-chat-form textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .custom-ai-assistant-picking,

@@ -22,16 +22,19 @@ test("parseBackupPayload rejects wrong app marker", () => {
 test("mergeBackupPayload merges arrays by id", () => {
   const current = createBackupPayload({
     history: [{ id: "a", title: "old" }],
-    savedPages: [{ id: "p1", title: "old" }]
+    savedPages: [{ id: "p1", title: "old" }],
+    floatingSessions: [{ id: "fs1", title: "old floating" }]
   }, "old");
   const backup = createBackupPayload({
     history: [{ id: "a", title: "new" }, { id: "b", title: "new b" }],
-    savedPages: [{ id: "p2", title: "new p" }]
+    savedPages: [{ id: "p2", title: "new p" }],
+    floatingSessions: [{ id: "fs2", title: "new floating" }]
   }, "new");
   const merged = mergeBackupPayload(current, backup);
   assert.equal(merged.history.length, 2);
   assert.equal(merged.history[0].title, "new");
   assert.equal(merged.savedPages.length, 2);
+  assert.equal(merged.floatingSessions.length, 2);
 });
 
 test("mergeBackupPayload replace mode returns backup data", () => {

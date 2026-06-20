@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS, HISTORY_LIMIT, SAVED_PAGE_STORAGE_LIMIT } from "./defaults.js";
 import { createBackupPayload, mergeBackupPayload } from "./backup.js";
+import { normalizeFloatingPageKey, upsertFloatingSession } from "./floatingMemory.js";
 import { removeSavedPageById, upsertSavedPage } from "./library.js";
 
 export async function getSettings() {
@@ -57,13 +58,32 @@ export async function deleteSavedPage(pageId) {
   });
 }
 
+export async function getFloatingSessions() {
+  const saved = await chrome.storage.local.get("floatingSessions");
+  return Array.isArray(saved.floatingSessions) ? saved.floatingSessions : [];
+}
+
+export async function getFloatingSessionsForPage(pageUrl) {
+  const pageKey = normalizeFloatingPageKey(pageUrl);
+  const sessions = await getFloatingSessions();
+  return sessions.filter((session) => session.pageKey === pageKey);
+}
+
+export async function saveFloatingSession(session) {
+  const sessions = await getFloatingSessions();
+  const next = upsertFloatingSession(sessions, session);
+  await chrome.storage.local.set({ floatingSessions: next });
+  return session;
+}
+
 export async function exportBackup(options = {}) {
-  const [settings, history, savedPages] = await Promise.all([
+  const [settings, history, savedPages, floatingSessions] = await Promise.all([
     getSettings(),
     getHistory(),
-    getSavedPages()
+    getSavedPages(),
+    getFloatingSessions()
   ]);
-  return createBackupPayload({ settings, history, savedPages }, undefined, options);
+  return createBackupPayload({ settings, history, savedPages, floatingSessions }, undefined, options);
 }
 
 export async function importBackup(payload, mode = "merge") {
@@ -72,7 +92,8 @@ export async function importBackup(payload, mode = "merge") {
   await chrome.storage.local.set({
     settings: next.settings,
     history: next.history,
-    savedPages: next.savedPages
+    savedPages: next.savedPages,
+    floatingSessions: next.floatingSessions
   });
   return next;
 }
