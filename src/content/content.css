@@ -12,14 +12,35 @@
   font-family: Arial, sans-serif;
 }
 
-#custom-ai-assistant-quick-rail {
+#custom-ai-assistant-dock {
   position: fixed;
   right: max(22px, calc(env(safe-area-inset-right) + 4px));
-  bottom: calc(max(18px, env(safe-area-inset-bottom)) + 56px);
+  bottom: max(18px, env(safe-area-inset-bottom));
   z-index: 2147483645;
   display: grid;
   gap: 8px;
+  justify-items: end;
   font-family: Arial, "Microsoft YaHei", sans-serif;
+  transition: transform 160ms ease, opacity 160ms ease;
+}
+
+#custom-ai-assistant-dock.is-dragging {
+  cursor: grabbing;
+  transition: none;
+}
+
+#custom-ai-assistant-dock.is-edge-hidden {
+  right: 0 !important;
+  transform: translateX(calc(100% - 16px));
+}
+
+#custom-ai-assistant-dock.is-edge-hidden:hover {
+  transform: translateX(0);
+}
+
+#custom-ai-assistant-quick-rail {
+  display: grid;
+  gap: 8px;
 }
 
 #custom-ai-assistant-quick-rail button {
@@ -40,6 +61,27 @@
 
 #custom-ai-assistant-quick-rail button:hover {
   background: #ecfdf5;
+}
+
+#custom-ai-assistant-dock .caa-dock-edge-toggle {
+  position: absolute;
+  right: calc(100% + 4px);
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 38px;
+  border: 1px solid rgba(15, 118, 110, 0.24);
+  border-radius: 10px 0 0 10px;
+  background: #ffffff;
+  color: #0f766e;
+  box-shadow: 0 8px 20px rgba(17, 24, 39, 0.14);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  transform: translateY(-50%);
 }
 
 #custom-ai-assistant-selection-toolbar[hidden] {
@@ -88,10 +130,7 @@
 }
 
 #custom-ai-assistant-launcher {
-  position: fixed;
-  right: max(18px, env(safe-area-inset-right));
-  bottom: max(18px, env(safe-area-inset-bottom));
-  z-index: 2147483646;
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -142,15 +181,19 @@
 }
 
 @media (max-width: 640px) {
-  #custom-ai-assistant-launcher {
+  #custom-ai-assistant-dock {
     right: max(12px, env(safe-area-inset-right));
     bottom: max(12px, env(safe-area-inset-bottom));
+  }
+
+  #custom-ai-assistant-launcher {
     width: 44px;
     height: 44px;
   }
 }
 
 @media print {
+  #custom-ai-assistant-dock,
   #custom-ai-assistant-launcher,
   #custom-ai-assistant-quick-rail,
   .custom-ai-assistant-floating-chat,

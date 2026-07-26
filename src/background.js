@@ -45,7 +45,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     type: "SELECTION_ACTION",
     action: info.menuItemId,
     selectionText: info.selectionText || "",
-    tabId: tab.id
+    tabId: tab.id,
+    frameId: info.frameId
   });
 });
 
@@ -87,7 +88,8 @@ async function handleMessage(message, sender) {
       type: "SELECTION_ACTION",
       action: message.action,
       selectionText: message.selectionText,
-      tabId: sender.tab?.id
+      tabId: sender.tab?.id,
+      frameId: sender.frameId
     });
     return { ok: true };
   }

@@ -8,6 +8,8 @@ import { clearHistory, deleteSavedPage, getHistory, getSavedPages, getSettings, 
 import { buildInlineTranslationPrompt, parseInlineTranslationResponse } from "../shared/translation.js";
 import { buildImageQuestionMessage } from "../shared/vision.js";
 
+const SIDE_PANEL_UI_STATE_KEY = "sidePanelUiState";
+
 const state = {
   settings: DEFAULT_SETTINGS,
   messages: [],
@@ -17,12 +19,14 @@ const state = {
   running: false,
   abort: null,
   busyNoticeShown: false,
-  clearHistoryArmed: false
+  clearHistoryArmed: false,
+  toolStackScrollTimer: null
 };
 
 const elements = {
   modelLabel: document.getElementById("modelLabel"),
   workspace: document.querySelector(".workspace"),
+  toolStack: document.querySelector(".tool-stack"),
   messages: document.getElementById("messages"),
   template: document.getElementById("messageTemplate"),
   composer: document.getElementById("composer"),
@@ -65,6 +69,7 @@ async function init() {
   wireEvents();
   await renderHistory();
   await renderLibrary();
+  await restoreToolStackScroll();
   await refreshContextStatus();
   await consumePendingAction();
   addMessage("assistant", "配置 API 后即可开始使用。直接输入问题会默认读取当前网页；也可以选择页面区域、截图问答或网页内翻译。");
@@ -72,6 +77,7 @@ async function init() {
 
 function wireEvents() {
   elements.openOptions.addEventListener("click", () => chrome.runtime.openOptionsPage());
+  elements.toolStack.addEventListener("scroll", saveToolStackScrollDebounced, { passive: true });
   elements.composer.addEventListener("submit", async (event) => {
     event.preventDefault();
     const text = elements.promptInput.value.trim();
@@ -128,7 +134,7 @@ function wireEvents() {
   });
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === "SELECTION_ACTION") {
-      runSelectionAction(message.action, message.selectionText);
+      runSelectionAction(message.action, message.selectionText, message.frameId);
     }
     if (message?.type === "PAGE_ACTION" && message.action === "summarize-page") {
       runPageAction("summary");
@@ -158,6 +164,26 @@ function wireEvents() {
       refreshContextStatus();
     }
   });
+}
+
+async function restoreToolStackScroll() {
+  const saved = await chrome.storage.local.get(SIDE_PANEL_UI_STATE_KEY).catch(() => ({}));
+  const scrollTop = Number(saved[SIDE_PANEL_UI_STATE_KEY]?.toolStackScrollTop || 0);
+  if (!Number.isFinite(scrollTop) || scrollTop <= 0) return;
+  requestAnimationFrame(() => {
+    elements.toolStack.scrollTop = Math.min(scrollTop, elements.toolStack.scrollHeight);
+  });
+}
+
+function saveToolStackScrollDebounced() {
+  window.clearTimeout(state.toolStackScrollTimer);
+  state.toolStackScrollTimer = window.setTimeout(() => {
+    chrome.storage.local.set({
+      [SIDE_PANEL_UI_STATE_KEY]: {
+        toolStackScrollTop: Math.round(elements.toolStack.scrollTop)
+      }
+    }).catch(() => {});
+  }, 120);
 }
 
 async function consumePendingAction() {
@@ -206,10 +232,10 @@ async function runPageQuestion(question) {
   await askModel([{ role: "user", content: buildPageQuestionPrompt(page, question) }]);
 }
 
-async function runSelectionAction(action, selectionText) {
+async function runSelectionAction(action, selectionText, frameId) {
   if (!selectionText) return;
   if (action === "translate") {
-    await translateSelectionInline(selectionText);
+    await translateSelectionInline(selectionText, frameId);
     return;
   }
   if (!ensureIdle()) return;
@@ -218,7 +244,7 @@ async function runSelectionAction(action, selectionText) {
   await askModel([{ role: "user", content: prompt }]);
 }
 
-async function translateSelectionInline(selectionText) {
+async function translateSelectionInline(selectionText, frameId) {
   if (!ensureIdle()) return;
   if (!beginTask()) return;
   const abortController = new AbortController();
@@ -228,7 +254,7 @@ async function translateSelectionInline(selectionText) {
     const translation = await requestChat(state.settings, buildMessages([
       { role: "user", content: buildSelectionPrompt("translate", selectionText, state.settings) }
     ]), { signal: abortController.signal });
-    await sendActiveTabMessage({ type: "APPLY_SELECTION_TRANSLATION", translation });
+    await sendActiveTabMessage({ type: "APPLY_SELECTION_TRANSLATION", translation }, getFrameMessageOptions(frameId));
     addMessage("assistant", translation || "(无内容)");
     state.messages.push(
       { role: "user", content: `翻译选中文本：${selectionText}` },
@@ -578,10 +604,14 @@ async function clearPageTranslations() {
   addMessage("assistant", "已清除当前页面译文。");
 }
 
-async function sendActiveTabMessage(message) {
+async function sendActiveTabMessage(message, options = undefined) {
   const tab = await getActiveTab();
   if (!tab?.id) return null;
-  return chrome.tabs.sendMessage(tab.id, message).catch(() => null);
+  return chrome.tabs.sendMessage(tab.id, message, options ?? { frameId: 0 }).catch(() => null);
+}
+
+function getFrameMessageOptions(frameId) {
+  return Number.isInteger(frameId) ? { frameId } : undefined;
 }
 
 async function getActiveTab() {

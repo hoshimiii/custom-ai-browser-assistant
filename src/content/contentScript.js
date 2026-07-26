@@ -1,10 +1,13 @@
 (() => {
+  const isTopFrame = window.top === window;
   const TOOLBAR_ID = "custom-ai-assistant-selection-toolbar";
   const SEARCH_PANEL_ID = "custom-ai-assistant-search-panel";
+  const DOCK_ID = "custom-ai-assistant-dock";
   const LAUNCHER_ID = "custom-ai-assistant-launcher";
   const QUICK_RAIL_ID = "custom-ai-assistant-quick-rail";
   const FLOATING_CHAT_CLASS = "custom-ai-assistant-floating-chat";
   const SESSION_PICKER_CLASS = "custom-ai-assistant-session-picker";
+  const DOCK_STATE_KEY = "customAiAssistantDockState";
   const FLOATING_CHAT_IDLE_MS = 5 * 60 * 1000;
   const TRANSLATABLE_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,figcaption,td,th,dd,dt,summary";
   const CONTAINER_SELECTOR = "article,main,[role='main'],section,div";
@@ -29,6 +32,7 @@
     "[contenteditable='true']",
     `#${TOOLBAR_ID}`,
     `#${SEARCH_PANEL_ID}`,
+    `#${DOCK_ID}`,
     `#${LAUNCHER_ID}`,
     `#${QUICK_RAIL_ID}`,
     `.${FLOATING_CHAT_CLASS}`,
@@ -41,6 +45,7 @@
   let selectedRegion = null;
   let pickMode = false;
   let highlightedPickNode = null;
+  let dockDragStart = null;
   const floatingCompressionTimers = new Map();
 
   document.addEventListener("mouseup", handleSelection);
@@ -103,8 +108,10 @@
     return false;
   });
 
-  maybeInjectSearchPanel();
-  injectFloatingLauncher();
+  if (isTopFrame) {
+    maybeInjectSearchPanel();
+    injectFloatingLauncher();
+  }
 
   function extractPage() {
     const type = detectPageType(location.href, document.contentType);
@@ -311,25 +318,27 @@
   }
 
   function injectFloatingLauncher() {
-    if (document.getElementById(LAUNCHER_ID)) return;
-    injectQuickRail();
+    if (document.getElementById(DOCK_ID)) return;
+    const dock = document.createElement("div");
+    dock.id = DOCK_ID;
+    dock.innerHTML = `<button type="button" class="caa-dock-edge-toggle" title="贴边隐藏/展开" aria-label="贴边隐藏或展开">‹</button>`;
+    dock.appendChild(createQuickRail());
     const launcher = document.createElement("button");
     launcher.id = LAUNCHER_ID;
     launcher.type = "button";
     launcher.setAttribute("aria-label", "Open AI Assistant");
-    launcher.title = "Open AI Assistant";
+    launcher.title = "点击打开侧边栏，拖动调整位置";
     launcher.innerHTML = `
       <span class="caa-launcher-mark" aria-hidden="true">AI</span>
       <span class="caa-launcher-dot" aria-hidden="true"></span>
     `;
-    launcher.addEventListener("click", () => {
-      chrome.runtime.sendMessage({ type: "OPEN_SIDE_PANEL" });
-    });
-    document.documentElement.appendChild(launcher);
+    dock.appendChild(launcher);
+    document.documentElement.appendChild(dock);
+    enableDockInteractions(dock, launcher);
+    restoreDockState(dock);
   }
 
-  function injectQuickRail() {
-    if (document.getElementById(QUICK_RAIL_ID)) return;
+  function createQuickRail() {
     const rail = document.createElement("div");
     rail.id = QUICK_RAIL_ID;
     rail.innerHTML = `
@@ -340,13 +349,134 @@
       const button = event.target.closest("button[data-floating-action]");
       if (!button) return;
       if (button.dataset.floatingAction === "chat") {
-        await openFloatingSessionPicker(button.getBoundingClientRect());
+        await openFloatingSessionPicker(button.getBoundingClientRect(), { preferredSide: "left" });
       }
       if (button.dataset.floatingAction === "screenshot") {
-        await openFloatingChatFromScreenshot(button.getBoundingClientRect());
+        await openFloatingChatFromScreenshot(button.getBoundingClientRect(), { preferredSide: "left" });
       }
     });
-    document.documentElement.appendChild(rail);
+    return rail;
+  }
+
+  function enableDockInteractions(dock, launcher) {
+    const edgeToggle = dock.querySelector(".caa-dock-edge-toggle");
+    launcher.addEventListener("mousedown", (event) => {
+      if (event.button !== 0) return;
+      if (dock.classList.contains("is-edge-hidden")) {
+        setDockEdgeHidden(dock, false, { persist: false });
+      }
+      const rect = dock.getBoundingClientRect();
+      dockDragStart = {
+        x: event.clientX,
+        y: event.clientY,
+        left: rect.left,
+        top: rect.top,
+        moved: false
+      };
+      dock.classList.add("is-dragging");
+      event.preventDefault();
+    });
+    launcher.addEventListener("click", (event) => {
+      if (dock.dataset.dragged === "true") {
+        event.preventDefault();
+        dock.dataset.dragged = "false";
+        return;
+      }
+      chrome.runtime.sendMessage({ type: "OPEN_SIDE_PANEL" });
+    });
+    edgeToggle.addEventListener("click", () => toggleDockEdge(dock));
+    document.addEventListener("mousemove", (event) => {
+      if (!dockDragStart) return;
+      const dx = event.clientX - dockDragStart.x;
+      const dy = event.clientY - dockDragStart.y;
+      if (Math.abs(dx) + Math.abs(dy) > 4) {
+        dockDragStart.moved = true;
+        dock.dataset.dragged = "true";
+      }
+      placeDockAt(dock, dockDragStart.left + dx, dockDragStart.top + dy);
+    });
+    document.addEventListener("mouseup", () => {
+      if (!dockDragStart) return;
+      dock.classList.remove("is-dragging");
+      saveDockState(dock, { edgeHidden: false });
+      dockDragStart = null;
+    });
+    window.addEventListener("resize", () => clampDockToViewport(dock), { passive: true });
+  }
+
+  async function restoreDockState(dock) {
+    const saved = await chrome.storage.local.get(DOCK_STATE_KEY).catch(() => ({}));
+    const state = saved[DOCK_STATE_KEY] || {};
+    if (Number.isFinite(state.left) && Number.isFinite(state.top)) {
+      placeDockAt(dock, state.left, state.top);
+    }
+    setDockEdgeHidden(dock, Boolean(state.edgeHidden), { persist: false });
+  }
+
+  function toggleDockEdge(dock) {
+    setDockEdgeHidden(dock, !dock.classList.contains("is-edge-hidden"));
+  }
+
+  function setDockEdgeHidden(dock, hidden, options = {}) {
+    const rect = dock.getBoundingClientRect();
+    if (hidden) {
+      dock.dataset.visibleLeft = String(Math.round(rect.left));
+      dock.dataset.visibleTop = String(Math.round(rect.top));
+      dock.style.left = "auto";
+      dock.style.right = "0px";
+      dock.style.top = `${clamp(rect.top, 8, window.innerHeight - dock.offsetHeight - 8)}px`;
+      dock.style.bottom = "auto";
+      dock.classList.add("is-edge-hidden");
+      dock.querySelector(".caa-dock-edge-toggle").textContent = "›";
+    } else {
+      dock.classList.remove("is-edge-hidden");
+      dock.querySelector(".caa-dock-edge-toggle").textContent = "‹";
+      const left = Number(dock.dataset.visibleLeft);
+      const top = Number(dock.dataset.visibleTop);
+      if (Number.isFinite(left) && Number.isFinite(top)) {
+        placeDockAt(dock, left, top);
+      }
+    }
+    if (options.persist !== false) {
+      saveDockState(dock, { edgeHidden: hidden });
+    }
+  }
+
+  function placeDockAt(dock, left, top) {
+    const width = dock.offsetWidth || 48;
+    const height = dock.offsetHeight || 104;
+    dock.style.left = `${clamp(left, 8, window.innerWidth - width - 8)}px`;
+    dock.style.top = `${clamp(top, 8, window.innerHeight - height - 8)}px`;
+    dock.style.right = "auto";
+    dock.style.bottom = "auto";
+  }
+
+  function clampDockToViewport(dock) {
+    if (dock.classList.contains("is-edge-hidden")) {
+      const top = clamp(dock.getBoundingClientRect().top, 8, window.innerHeight - dock.offsetHeight - 8);
+      dock.style.top = `${top}px`;
+      saveDockState(dock, { edgeHidden: true });
+      return;
+    }
+    const rect = dock.getBoundingClientRect();
+    placeDockAt(dock, rect.left, rect.top);
+    saveDockState(dock, { edgeHidden: false });
+  }
+
+  function saveDockState(dock, patch = {}) {
+    const rect = dock.getBoundingClientRect();
+    const visibleLeft = Number(dock.dataset.visibleLeft);
+    const visibleTop = Number(dock.dataset.visibleTop);
+    const edgeHidden = patch.edgeHidden ?? dock.classList.contains("is-edge-hidden");
+    const left = edgeHidden && Number.isFinite(visibleLeft) ? visibleLeft : rect.left;
+    const top = edgeHidden && Number.isFinite(visibleTop) ? visibleTop : rect.top;
+    chrome.storage.local.set({
+      [DOCK_STATE_KEY]: {
+        left: Math.round(left),
+        top: Math.round(top),
+        edgeHidden
+      }
+    }).catch(() => {});
   }
 
   async function openFloatingChatFromSelection() {
@@ -364,7 +494,7 @@
     }, rect);
   }
 
-  async function openFloatingChatFromScreenshot(anchorRect) {
+  async function openFloatingChatFromScreenshot(anchorRect, placement = {}) {
     const response = await chrome.runtime.sendMessage({ type: "CAPTURE_VISIBLE_TAB" }).catch((error) => ({
       ok: false,
       error: error.message
@@ -375,7 +505,7 @@
         label: "截图失败",
         title: document.title,
         text: `截图失败：${response?.error || "无法截取当前页面"}`
-      }, anchorRect);
+      }, anchorRect, null, placement);
       return;
     }
     await openFloatingChat({
@@ -385,17 +515,17 @@
       text: "当前网页可视区域截图",
       imageDataUrl: response.imageDataUrl,
       hasImage: true
-    }, anchorRect);
+    }, anchorRect, null, placement);
   }
 
-  async function openFloatingSessionPicker(anchorRect) {
+  async function openFloatingSessionPicker(anchorRect, placement = {}) {
     const loaded = await chrome.runtime.sendMessage({
       type: "FLOATING_CHAT_LOAD",
       pageUrl: location.href
     }).catch(() => ({ ok: false, sessions: [] }));
     const sessions = loaded?.sessions || [];
     if (!sessions.length) {
-      await openFloatingChat(buildPageFloatingSource(), anchorRect);
+      await openFloatingChat(buildPageFloatingSource(), anchorRect, null, placement);
       return;
     }
 
@@ -417,20 +547,20 @@
       button.textContent = `${session.title || "浮窗会话"} · ${new Date(session.updatedAt || session.createdAt || Date.now()).toLocaleString()}`;
       button.addEventListener("click", async () => {
         picker.remove();
-        await openFloatingChat(session.source || buildPageFloatingSource(), anchorRect, session);
+        await openFloatingChat(session.source || buildPageFloatingSource(), anchorRect, session, placement);
       });
       list.append(button);
     }
     picker.querySelector("[data-picker-action='close']").addEventListener("click", () => picker.remove());
     picker.querySelector("[data-picker-action='new']").addEventListener("click", async () => {
       picker.remove();
-      await openFloatingChat(buildPageFloatingSource(), anchorRect);
+      await openFloatingChat(buildPageFloatingSource(), anchorRect, null, placement);
     });
     document.documentElement.appendChild(picker);
-    placeFloatingDialog(picker, anchorRect);
+    placeFloatingDialog(picker, anchorRect, placement);
   }
 
-  async function openFloatingChat(source, anchorRect, existingSession = null) {
+  async function openFloatingChat(source, anchorRect, existingSession = null, placement = {}) {
     const start = existingSession ? { ok: true, session: existingSession } : await chrome.runtime.sendMessage({
       type: "FLOATING_CHAT_START",
       pageUrl: location.href,
@@ -440,7 +570,7 @@
 
     const dialog = createFloatingChatDialog(source, start?.session);
     document.documentElement.appendChild(dialog);
-    placeFloatingDialog(dialog, anchorRect);
+    placeFloatingDialog(dialog, anchorRect, placement);
     enableFloatingDialogDrag(dialog);
 
     if (!start?.ok) {
@@ -604,10 +734,23 @@
     return `<blockquote>${escapeHtml(text.slice(0, 420) || "当前网页上下文")}</blockquote>`;
   }
 
-  function placeFloatingDialog(dialog, anchorRect) {
+  function placeFloatingDialog(dialog, anchorRect, options = {}) {
     const width = Math.min(380, window.innerWidth - 16);
     const estimatedHeight = Math.min(520, window.innerHeight - 24);
-    const left = clamp(anchorRect.left, 8, window.innerWidth - width - 8);
+    const gap = 10;
+    const leftSpace = anchorRect.left - gap - 8;
+    const rightSpace = window.innerWidth - anchorRect.right - gap - 8;
+    let left = anchorRect.left;
+    if (options.preferredSide === "left" && leftSpace >= Math.min(width, 260)) {
+      left = anchorRect.left - width - gap;
+    } else if (options.preferredSide === "right" && rightSpace >= Math.min(width, 260)) {
+      left = anchorRect.right + gap;
+    } else if (rightSpace >= width) {
+      left = anchorRect.right + gap;
+    } else if (leftSpace >= width) {
+      left = anchorRect.left - width - gap;
+    }
+    left = clamp(left, 8, window.innerWidth - width - 8);
     const top = anchorRect.bottom + 10;
     dialog.style.width = `${width}px`;
     dialog.style.left = `${left}px`;
@@ -914,7 +1057,7 @@
   }
 
   function isExtensionNode(node) {
-    return Boolean(node?.closest?.(`#${TOOLBAR_ID},#${SEARCH_PANEL_ID},#${LAUNCHER_ID},#${QUICK_RAIL_ID},.${FLOATING_CHAT_CLASS},.${SESSION_PICKER_CLASS},.custom-ai-assistant-inline-translation`));
+    return Boolean(node?.closest?.(`#${TOOLBAR_ID},#${SEARCH_PANEL_ID},#${DOCK_ID},#${LAUNCHER_ID},#${QUICK_RAIL_ID},.${FLOATING_CHAT_CLASS},.${SESSION_PICKER_CLASS},.custom-ai-assistant-inline-translation`));
   }
 
   function isVisible(node) {
