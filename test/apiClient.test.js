@@ -28,9 +28,22 @@ test("consumeSseBuffer parses full events and keeps remainder", () => {
   assert.match(result.remainder, /content/);
 });
 
+test("consumeSseBuffer parses CRLF events", () => {
+  const result = consumeSseBuffer('data: {"choices":[{"delta":{"content":"好"}}]}\r\n\r\n');
+  assert.equal(result.events.length, 1);
+  assert.equal(readDeltaContent(result.events[0]), "好");
+});
+
 test("readDeltaContent returns token", () => {
   const token = readDeltaContent('{"choices":[{"delta":{"content":"hello"}}]}');
   assert.equal(token, "hello");
+});
+
+test("requestChat accepts simple text-part content arrays", async () => {
+  const text = await requestChat(settings, [{ role: "user", content: "hi" }], {
+    fetchImpl: async () => jsonResponse({ choices: [{ message: { content: [{ type: "text", text: "hello" }] } }] })
+  });
+  assert.equal(text, "hello");
 });
 
 test("validateBaseUrlPolicy allows https and local http", () => {
@@ -84,6 +97,34 @@ test("streamChat aborts fetch at the configured timeout", async () => {
   assert.equal(signals[0].aborted, true);
 });
 
+test("streamChat flushes a terminal SSE event without a separator", async () => {
+  const tokens = [];
+  await streamChat(settings, [{ role: "user", content: "hi" }], {
+    onToken: (token) => tokens.push(token)
+  }, {
+    fetchImpl: async () => streamResponse('data: {"choices":[{"delta":{"content":"最后"}}]}')
+  });
+  assert.deepEqual(tokens, ["最后"]);
+});
+
+test("requestChat rejects an empty successful response", async () => {
+  await assert.rejects(
+    requestChat(settings, [{ role: "user", content: "hi" }], {
+      fetchImpl: async () => jsonResponse({ choices: [{ message: { content: "" } }] })
+    }),
+    /空内容/
+  );
+});
+
+test("streamChat rejects an empty successful response", async () => {
+  await assert.rejects(
+    streamChat(settings, [{ role: "user", content: "hi" }], {}, {
+      fetchImpl: async () => streamResponse('data: [DONE]\n\n')
+    }),
+    /空内容/
+  );
+});
+
 function createHangingFetch(signals) {
   return async (_url, options) => {
     const { signal } = options;
@@ -93,5 +134,17 @@ function createHangingFetch(signals) {
       if (signal.aborted) rejectAbort();
       else signal.addEventListener("abort", rejectAbort, { once: true });
     });
+  };
+}
+
+function jsonResponse(payload) {
+  return { ok: true, json: async () => payload };
+}
+
+function streamResponse(text) {
+  const bytes = new TextEncoder().encode(text);
+  return {
+    ok: true,
+    body: new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } })
   };
 }

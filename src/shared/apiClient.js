@@ -80,7 +80,7 @@ export async function requestChat(settings, messages, overrides = {}) {
         payload
       });
     }
-    return payload?.choices?.[0]?.message?.content || "";
+    return requireUsableText(readMessageContent(payload?.choices?.[0]?.message?.content));
   } finally {
     request.cleanup();
   }
@@ -111,7 +111,7 @@ export async function streamChat(settings, messages, callbacks = {}, overrides =
 
     if (!response.body) {
       const payload = await response.json();
-      const text = payload?.choices?.[0]?.message?.content || "";
+      const text = requireUsableText(readMessageContent(payload?.choices?.[0]?.message?.content));
       callbacks.onToken?.(text);
       callbacks.onDone?.(text);
       return { abort: request.abort };
@@ -130,8 +130,9 @@ export async function streamChat(settings, messages, callbacks = {}, overrides =
       buffer = parsed.remainder;
       for (const event of parsed.events) {
         if (event === "[DONE]") {
+          requireUsableText(fullText);
           callbacks.onDone?.(fullText);
-          return;
+          return { abort: request.abort };
         }
         const token = readDeltaContent(event);
         if (token) {
@@ -140,7 +141,19 @@ export async function streamChat(settings, messages, callbacks = {}, overrides =
         }
       }
     }
+    buffer += decoder.decode();
+    const parsed = consumeSseBuffer(buffer, true);
+    for (const event of parsed.events) {
+      if (event === "[DONE]") break;
+      const token = readDeltaContent(event);
+      if (token) {
+        fullText += token;
+        callbacks.onToken?.(token, fullText);
+      }
+    }
+    requireUsableText(fullText);
     callbacks.onDone?.(fullText);
+    return { abort: request.abort };
   } finally {
     request.cleanup();
   }
@@ -168,13 +181,14 @@ function createRequestController(settings, externalSignal) {
   };
 }
 
-export function consumeSseBuffer(buffer) {
-  const parts = buffer.split(/\n\n/);
-  const remainder = parts.pop() || "";
+export function consumeSseBuffer(buffer, flush = false) {
+  const parts = String(buffer || "").split(/\r?\n\r?\n/);
+  const remainder = flush ? "" : (parts.pop() || "");
+  if (flush && parts.length === 1 && !parts[0].trim()) parts.length = 0;
   const events = [];
   for (const part of parts) {
     const dataLines = part
-      .split(/\n/)
+      .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trim());
@@ -189,10 +203,25 @@ export function readDeltaContent(event) {
   if (event === "[DONE]") return "";
   try {
     const payload = JSON.parse(event);
-    return payload?.choices?.[0]?.delta?.content || "";
+    return readMessageContent(payload?.choices?.[0]?.delta?.content);
   } catch {
     return "";
   }
+}
+
+function readMessageContent(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((part) => part?.type === "text" || typeof part?.text === "string")
+    .map((part) => String(part.text || ""))
+    .join("");
+}
+
+function requireUsableText(text) {
+  const normalized = String(text || "").trim();
+  if (!normalized) throw new ApiError("模型返回了空内容，请检查模型兼容性，或关闭流式输出后重试。");
+  return normalized;
 }
 
 async function safeJson(response) {

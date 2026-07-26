@@ -27,6 +27,34 @@ export function buildPageIdentity(tabId, url) {
   return Number.isInteger(tabId) && normalizedUrl ? `${tabId}:${normalizedUrl}` : "";
 }
 
+export function createSelectedRegionPageSnapshot(tab, region) {
+  const url = String(tab?.url || "").trim();
+  const text = String(region?.text || "").trim();
+  const identity = buildPageIdentity(tab?.id, url);
+  if (!identity || !text) return null;
+  const label = String(region?.label || "选中区域").trim() || "选中区域";
+  return {
+    identity,
+    type: detectPageType(url),
+    scope: "selected-region",
+    title: `${label} - ${String(tab?.title || "当前网页").trim()}`,
+    url,
+    text,
+    selectedRegion: {
+      id: String(region?.id || "").trim(),
+      label,
+      text,
+      chars: text.length
+    }
+  };
+}
+
+export function resolveSelectedRegionPageSnapshot(snapshot, tab) {
+  return snapshot?.identity && snapshot.identity === buildPageIdentity(tab?.id, tab?.url) && snapshot.text?.trim()
+    ? snapshot
+    : null;
+}
+
 export function buildPageContext(page) {
   const type = page.type || detectPageType(page.url || "");
   if (type === "youtube") {

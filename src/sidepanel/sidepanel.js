@@ -4,7 +4,7 @@ import { buildChunkSummaryPrompts, buildFinalSummaryPrompt, splitTextIntoChunks 
 import { DEFAULT_SETTINGS, MESSAGE_LIMIT } from "../shared/defaults.js";
 import { buildSavedPageQuestionPrompt, searchSavedPages } from "../shared/library.js";
 import { buildPagePlannerMessages, parsePagePlannerResponse } from "../shared/pageRecipes.js";
-import { buildPageIdentity } from "../shared/pageTypes.js";
+import { buildPageIdentity, createSelectedRegionPageSnapshot, resolveSelectedRegionPageSnapshot } from "../shared/pageTypes.js";
 import { buildPageQuestionPrompt, buildPageSummaryPrompt, buildSearchPrompt, buildSelectionPrompt, buildWritingPrompt } from "../shared/prompts.js";
 import { clearHistory, deletePageRecipe, deleteSavedPage, findStoredPageRecipe, getHistory, getSavedPages, getSettings, saveConversation, savePageRecipe, savePageSnapshot } from "../shared/storage.js";
 import { buildInlineTranslationPrompt, parseInlineTranslationResponse } from "../shared/translation.js";
@@ -19,6 +19,9 @@ const state = {
   currentTabId: null,
   context: null,
   contextIdentity: "",
+  selectedRegionPage: null,
+  regionEventToken: 0,
+  contextRevision: 0,
   conversationId: null,
   conversationCreatedAt: null,
   pendingScreenshot: null,
@@ -145,9 +148,9 @@ function wireEvents() {
   elements.stopTts.addEventListener("click", stopTts);
   elements.ttsAudio.addEventListener("play", handleTtsAudioPlay);
   elements.ttsAudio.addEventListener("ended", playNextTtsChunk);
-  chrome.runtime.onMessage.addListener((message) => {
+  chrome.runtime.onMessage.addListener((message, sender) => {
     if (message?.type === "SELECTION_ACTION") {
-      runSelectionAction(message.action, message.selectionText, message.frameId);
+      runSelectionAction(message.action, message.selectionText, message.tabId, message.frameId);
     }
     if (message?.type === "PAGE_ACTION" && message.action === "summarize-page") {
       runPageAction("summary");
@@ -159,16 +162,10 @@ function wireEvents() {
       addMessage("assistant", "请在网页上移动鼠标选择区域，点击确认，按 Esc 取消。");
     }
     if (message?.type === "REGION_SELECTED") {
-      state.context = {
-        mode: "selected-region",
-        label: message.region?.label || "选中区域",
-        chars: message.region?.chars || 0
-      };
-      updateContextLabel();
-      addMessage("assistant", `已选择页面区域：${state.context.label}`);
+      handleRegionSelected(message, sender);
     }
     if (message?.type === "REGION_CLEARED") {
-      refreshContextStatus();
+      handleRegionCleared(sender);
     }
   });
   chrome.tabs?.onActivated?.addListener(() => refreshContextStatus());
@@ -196,6 +193,60 @@ async function consumePendingAction() {
   }
 }
 
+function queueRegionEvent(sender) {
+  if (sender.frameId !== 0 || !sender.tab?.id || !sender.tab?.url) return null;
+  return { token: ++state.regionEventToken, identity: buildPageIdentity(sender.tab.id, sender.tab.url) };
+}
+
+async function handleRegionSelected(message, sender) {
+  const event = queueRegionEvent(sender);
+  const page = createSelectedRegionPageSnapshot(sender.tab, message.region);
+  if (!event || !page) return;
+  const activeTab = await getActiveTab();
+  if (event.token !== state.regionEventToken || event.identity !== buildPageIdentity(activeTab?.id, activeTab?.url)) return;
+  const hadContext = Boolean(state.contextIdentity);
+  const samePage = state.contextIdentity === event.identity;
+  const sameRegion = samePage && isSameSelectedRegion(state.selectedRegionPage, page);
+  syncConversationContext(sender.tab);
+  if (event.token !== state.regionEventToken) return;
+  if (!sameRegion && !hadContext) state.contextRevision += 1;
+  if (samePage && !sameRegion) restartForContextChange();
+  state.selectedRegionPage = page;
+  state.currentTabId = sender.tab.id;
+  state.contextIdentity = page.identity;
+  state.context = pageContextFromPage(page);
+  updateContextLabel();
+  if (samePage && !sameRegion) addMessage("assistant", "选中区域已更换，已开始新会话。");
+  addMessage("assistant", `已选择页面区域：${state.context.label}`);
+}
+
+async function handleRegionCleared(sender) {
+  const event = queueRegionEvent(sender);
+  if (!event) return;
+  const activeTab = await getActiveTab();
+  if (event.token !== state.regionEventToken || event.identity !== buildPageIdentity(activeTab?.id, activeTab?.url)) return;
+  if (state.selectedRegionPage?.identity === event.identity) {
+    restartForContextChange();
+    state.selectedRegionPage = null;
+  }
+  await refreshContextStatus();
+}
+
+function isSameSelectedRegion(previous, next) {
+  return Boolean(
+    previous?.identity === next?.identity &&
+    previous?.selectedRegion?.id &&
+    previous.selectedRegion.id === next.selectedRegion?.id
+  );
+}
+
+function restartForContextChange() {
+  state.contextRevision += 1;
+  state.abort?.();
+  stopTts();
+  resetConversation();
+}
+
 async function sendUserPrompt(text) {
   if (!ensureIdle()) return;
   const prepared = await preparePageForOperation("page-question", { silent: true });
@@ -207,6 +258,10 @@ async function sendUserPrompt(text) {
     } finally {
       endTask();
     }
+    return;
+  }
+  if (state.context?.mode === "selected-region") {
+    addMessage("error", "选中区域暂时无法读取。请重新选择该区域后重试；不会改为普通聊天。");
     return;
   }
   addMessage("error", "未能读取当前网页内容，本次将按普通聊天发送。可刷新网页或使用“选择区域”后重试。");
@@ -235,10 +290,10 @@ async function runPageAction(actionId) {
   }
 }
 
-async function runSelectionAction(action, selectionText, frameId) {
+async function runSelectionAction(action, selectionText, tabId, frameId) {
   if (!selectionText) return;
   if (action === "translate") {
-    await translateSelectionInline(selectionText, frameId);
+    await translateSelectionInline(selectionText, tabId, frameId);
     return;
   }
   if (!ensureIdle()) return;
@@ -247,19 +302,20 @@ async function runSelectionAction(action, selectionText, frameId) {
   await askModel([{ role: "user", content: prompt }]);
 }
 
-async function translateSelectionInline(selectionText, frameId) {
+async function translateSelectionInline(selectionText, tabId, frameId) {
   if (!ensureIdle()) return;
   if (!beginTask()) return;
   const abortController = new AbortController();
   state.abort = () => abortController.abort();
   try {
+    const target = await createSelectionTarget(tabId, frameId);
     addMessage("user", "网页内翻译选中文本");
     const settings = currentRequestSettings();
     const translation = await requestChat(settings, buildMessages([
       { role: "user", content: buildSelectionPrompt("translate", selectionText, settings) }
     ]), { signal: abortController.signal });
-    await sendActiveTabMessage({ type: "APPLY_SELECTION_TRANSLATION", translation }, getFrameMessageOptions(frameId));
-    addMessage("assistant", translation || "(无内容)");
+    await sendPinnedTabMessage(target, { type: "APPLY_SELECTION_TRANSLATION", translation });
+    addMessage("assistant", translation);
     state.messages.push(
       { role: "user", content: `翻译选中文本：${selectionText}` },
       { role: "assistant", content: translation }
@@ -372,7 +428,10 @@ async function runInlinePageTranslation() {
   const prepared = await preparePageForOperation("translate-page");
   if (!prepared?.page) return;
   try {
-    const response = await sendActiveTabMessage({ type: "GET_TRANSLATABLE_BLOCKS", limit: 48, recipeSelectors: prepared.selectors });
+    const response = await sendPinnedTabMessage(prepared.target, { type: "GET_TRANSLATABLE_BLOCKS", limit: 48, recipeSelectors: prepared.selectors });
+    if (prepared.page.scope === "selected-region" && response?.context?.mode !== "selected-region") {
+      throw new Error("选区已失效，请重新选择");
+    }
     const blocks = response?.blocks || [];
     if (!response?.ok || !blocks.length) {
       addMessage("error", "未找到可翻译的网页正文块。可以先点击“选择区域”限定正文范围。");
@@ -389,7 +448,7 @@ async function runInlinePageTranslation() {
         { role: "user", content: buildInlineTranslationPrompt(batch, settings) }
       ]), { signal: prepared.signal });
       const translations = parseInlineTranslationResponse(raw);
-      await sendActiveTabMessage({ type: "APPLY_TRANSLATIONS", translations });
+      await sendPinnedTabMessage(prepared.target, { type: "APPLY_TRANSLATIONS", translations });
       addMessage("assistant", `已写入第 ${index + 1}/${batches.length} 批译文。`);
     }
     addMessage("assistant", "网页内翻译完成。可使用“隐藏译文 / 显示译文 / 清除译文”控制页面显示。");
@@ -473,9 +532,7 @@ async function askModelDuringTask(newMessages, signal, settings = currentRequest
       fullText = await requestChat(settings, messages, { signal });
       assistantNode.querySelector(".content").textContent = fullText;
     }
-    if (!fullText) {
-      assistantNode.querySelector(".content").textContent = "(无内容)";
-    }
+    if (!fullText.trim()) throw new Error("模型返回了空内容，请检查模型兼容性，或关闭流式输出后重试。");
     state.messages.push(...newMessages.map(sanitizeMessageForHistory), { role: "assistant", content: fullText });
     trimMessages();
     await persist();
@@ -530,27 +587,53 @@ async function extractCurrentPage(options = {}) {
   syncConversationContext(tab);
   state.currentTabId = tab.id;
   const response = await chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_PAGE", recipeSelectors: options.recipeSelectors }, { frameId: 0 }).catch(() => null);
-  if (!response?.ok || (!response.page?.text && !options.allowEmpty)) {
+  if (!response?.ok || !response.page || (!response.page.text && !options.allowEmpty)) {
+    const activeTab = await getActiveTab();
+    const selectedPage = resolveSelectedRegionPageSnapshot(state.selectedRegionPage, activeTab);
+    if (selectedPage) return applyPageContext(selectedPage, activeTab);
     if (!options.silent) addMessage("error", "无法读取当前页面。请刷新页面、换到普通网页，或使用“选择区域”后重试。");
     updateUnavailableContext("无法读取当前页面");
     return null;
   }
   const activeTab = await getActiveTab();
   if (buildPageIdentity(activeTab?.id, activeTab?.url) !== buildPageIdentity(tab.id, response.page.url)) {
-    return null;
+    const selectedPage = resolveSelectedRegionPageSnapshot(state.selectedRegionPage, activeTab);
+    return selectedPage ? applyPageContext(selectedPage, activeTab) : null;
+  }
+  const selectedPage = resolveSelectedRegionPageSnapshot(state.selectedRegionPage, activeTab);
+  if (response.page.scope !== "selected-region" && selectedPage) {
+    return applyPageContext(selectedPage, activeTab);
   }
   if (options.recipeSelectors && !response.page.recipe?.valid) return response.page;
-  syncConversationContext(tab, response.page.url);
-  state.context = {
-    mode: response.page.scope === "selected-region" ? "selected-region" : "page",
-    label: response.page.scope === "selected-region" ? response.page.selectedRegion?.label || "选中区域" : "当前网页",
-    chars: response.page.text.length,
-    title: response.page.title,
-    url: response.page.url,
-    pageType: response.page.type
-  };
+  if (response.page.scope === "selected-region") {
+    state.selectedRegionPage = createSelectedRegionPageSnapshot(
+      { ...activeTab, url: response.page.url, title: activeTab?.title },
+      response.page.selectedRegion || response.page
+    );
+  }
+  return applyPageContext(response.page, activeTab);
+}
+
+function applyPageContext(page, tab) {
+  syncConversationContext(tab, page.url);
+  state.context = pageContextFromPage(page);
   updateContextLabel();
-  return response.page;
+  return page;
+}
+
+function pageContextFromPage(page) {
+  return {
+    mode: page.scope === "selected-region" ? "selected-region" : "page",
+    label: page.scope === "selected-region" ? page.selectedRegion?.label || "选中区域" : "当前网页",
+    chars: page.text?.length || 0,
+    title: page.title,
+    url: page.url,
+    pageType: page.type
+  };
+}
+
+async function getSelectedRegionSnapshotForActiveTab() {
+  return resolveSelectedRegionPageSnapshot(state.selectedRegionPage, await getActiveTab());
 }
 
 async function preparePageForOperation(operation, options = {}) {
@@ -564,11 +647,13 @@ async function preparePageForOperation(operation, options = {}) {
     if (!genericPage) return { page: null, cancelled: abortController.signal.aborted };
     if (abortController.signal.aborted) return { page: null, cancelled: true };
     if (genericPage.scope === "selected-region") {
+      const target = operation === "translate-page" ? await createPageTarget(genericPage) : null;
       keepTask = true;
-      return { page: genericPage, selectors: [], settings, signal: abortController.signal };
+      return { page: genericPage, selectors: [], settings, signal: abortController.signal, target };
     }
     const planned = await resolvePageRecipe(genericPage, operation, settings, abortController.signal);
     if (abortController.signal.aborted) return { page: null, cancelled: true };
+    if (operation === "translate-page") planned.target = await createPageTarget(planned.page);
     keepTask = true;
     return planned;
   } catch (error) {
@@ -645,6 +730,7 @@ async function refreshContextStatus() {
   state.currentTabId = tab.id;
   const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_CONTEXT_STATUS" }, { frameId: 0 }).catch(() => null);
   if (!response?.ok) {
+    if (await getSelectedRegionSnapshotForActiveTab()) return;
     updateUnavailableContext("当前页面不可读取");
     return;
   }
@@ -652,7 +738,12 @@ async function refreshContextStatus() {
   if (buildPageIdentity(activeTab?.id, activeTab?.url) !== buildPageIdentity(tab.id, response.context?.url)) {
     return;
   }
-  syncConversationContext(tab, response.context?.url);
+  const selectedPage = resolveSelectedRegionPageSnapshot(state.selectedRegionPage, activeTab);
+  if (response.context?.mode !== "selected-region" && selectedPage) {
+    applyPageContext(selectedPage, activeTab);
+    return;
+  }
+  syncConversationContext(activeTab, response.context?.url);
   state.context = response.context;
   updateContextLabel();
 }
@@ -666,8 +757,8 @@ function syncConversationContext(tab, url = tab?.url) {
   const nextIdentity = buildPageIdentity(tab?.id, url);
   if (!nextIdentity) return;
   if (state.contextIdentity && state.contextIdentity !== nextIdentity) {
-    state.abort?.();
-    resetConversation();
+    state.selectedRegionPage = null;
+    restartForContextChange();
     clearPendingScreenshot();
     addMessage("assistant", "页面已切换，已开始新会话，避免混用上一页内容。");
   }
@@ -724,13 +815,49 @@ async function sendActiveTabMessage(message, options = undefined) {
   return chrome.tabs.sendMessage(tab.id, message, options ?? { frameId: 0 }).catch(() => null);
 }
 
-function getFrameMessageOptions(frameId) {
-  return Number.isInteger(frameId) ? { frameId } : undefined;
-}
-
 async function getActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   return tabs[0];
+}
+
+async function createPageTarget(page) {
+  const tab = await getActiveTab();
+  if (!tab?.id || buildPageIdentity(tab.id, tab.url) !== buildPageIdentity(tab.id, page?.url)) {
+    throw new Error("页面已切换，已停止网页写入");
+  }
+  return { tabId: tab.id, url: tab.url, frameId: 0, contextRevision: state.contextRevision };
+}
+
+async function createSelectionTarget(tabId, frameId) {
+  const tab = Number.isInteger(tabId) ? await chrome.tabs.get(tabId).catch(() => null) : null;
+  const activeTab = await getActiveTab();
+  const source = tab || (activeTab?.id === tabId ? activeTab : null);
+  if (!source?.id || buildPageIdentity(source.id, source.url) !== buildPageIdentity(activeTab?.id, activeTab?.url)) {
+    throw new Error("页面已切换，已停止网页写入");
+  }
+  return { tabId: source.id, url: source.url, frameId: Number.isInteger(frameId) ? frameId : 0, contextRevision: state.contextRevision };
+}
+
+async function sendPinnedTabMessage(target, message) {
+  const verify = async () => {
+    if (target?.contextRevision !== state.contextRevision) {
+      throw new Error("选区已更换，已停止网页写入");
+    }
+    const activeTab = await getActiveTab();
+    if (buildPageIdentity(activeTab?.id, activeTab?.url) !== buildPageIdentity(target?.tabId, target?.url)) {
+      throw new Error("页面已切换，已停止网页写入");
+    }
+  };
+  await verify();
+  let response;
+  try {
+    response = await chrome.tabs.sendMessage(target.tabId, message, { frameId: target.frameId });
+  } catch (error) {
+    await verify();
+    throw error;
+  }
+  await verify();
+  return response;
 }
 
 function formatPageScope(page) {

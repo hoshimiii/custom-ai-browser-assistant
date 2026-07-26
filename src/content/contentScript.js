@@ -10,6 +10,7 @@
   const DOCK_STATE_KEY = "customAiAssistantDockState";
   const FLOATING_CHAT_IDLE_MS = 5 * 60 * 1000;
   const TRANSLATABLE_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,figcaption,td,th,dd,dt,summary";
+  const TRANSLATION_FALLBACK_SELECTOR = "article,section,div";
   const CONTAINER_SELECTOR = "article,main,[role='main'],section,div";
   const SKIP_SELECTOR = [
     "script",
@@ -979,7 +980,7 @@
   }
 
   function selectRegion(node) {
-    clearSelectedRegion();
+    clearSelectedRegionMarker();
     const text = normalizeText(node.innerText || node.textContent || "");
     if (!text) return;
     const id = ensureElementId(node);
@@ -994,14 +995,22 @@
   }
 
   function clearSelectedRegion() {
+    clearSelectedRegionMarker();
+    chrome.runtime.sendMessage({ type: "REGION_CLEARED" });
+  }
+
+  function clearSelectedRegionMarker() {
     if (selectedRegion?.element?.isConnected) {
       selectedRegion.element.classList.remove("custom-ai-assistant-selected-region");
     }
     selectedRegion = null;
-    chrome.runtime.sendMessage({ type: "REGION_CLEARED" });
+    for (const marker of document.querySelectorAll(".custom-ai-assistant-selected-region")) {
+      marker.classList.remove("custom-ai-assistant-selected-region");
+    }
   }
 
   function getSelectedRegionSnapshot() {
+    recoverSelectedRegion();
     if (!selectedRegion?.element?.isConnected) {
       selectedRegion = null;
       return null;
@@ -1017,16 +1026,36 @@
   }
 
   function getContextRoot() {
+    recoverSelectedRegion();
     return selectedRegion?.element?.isConnected ? selectedRegion.element : null;
+  }
+
+  function recoverSelectedRegion() {
+    if (selectedRegion?.element?.isConnected) return;
+    selectedRegion = null;
+    const markers = [...document.querySelectorAll(".custom-ai-assistant-selected-region")].filter((node) => !isExtensionNode(node));
+    const marker = markers.shift();
+    for (const orphan of markers) orphan.classList.remove("custom-ai-assistant-selected-region");
+    if (!marker) return;
+    const text = normalizeText(marker.innerText || marker.textContent || "");
+    if (!text) {
+      marker.classList.remove("custom-ai-assistant-selected-region");
+      return;
+    }
+    selectedRegion = {
+      id: ensureElementId(marker),
+      element: marker,
+      label: buildElementLabel(marker),
+      text
+    };
   }
 
   function collectTranslatableBlocks(limit, recipeSelectors = []) {
     const roots = getTranslationRoots(recipeSelectors);
     if (!roots.length) return [];
-    const nodes = [];
-    for (const root of roots) {
-      if (root.matches?.(TRANSLATABLE_SELECTOR)) nodes.push(root);
-      nodes.push(...root.querySelectorAll(TRANSLATABLE_SELECTOR));
+    let nodes = collectTranslationNodes(roots, TRANSLATABLE_SELECTOR);
+    if (!nodes.some(isTranslatableNode)) {
+      nodes = collectTranslationNodes(roots, `${TRANSLATABLE_SELECTOR},${TRANSLATION_FALLBACK_SELECTOR}`);
     }
 
     const seen = new Set();
@@ -1035,7 +1064,7 @@
       if (blocks.length >= limit) break;
       if (!isTranslatableNode(node)) continue;
       const text = normalizeText(node.innerText || node.textContent || "");
-      const key = text.slice(0, 220);
+      const key = text;
       if (seen.has(key)) continue;
       seen.add(key);
       blocks.push({
@@ -1045,6 +1074,15 @@
       });
     }
     return blocks;
+  }
+
+  function collectTranslationNodes(roots, selector) {
+    const nodes = [];
+    for (const root of roots) {
+      if (root.matches?.(selector)) nodes.push(root);
+      nodes.push(...root.querySelectorAll(selector));
+    }
+    return nodes;
   }
 
   function getTranslationRoots(recipeSelectors) {
@@ -1061,14 +1099,14 @@
     const text = normalizeText(node.innerText || node.textContent || "");
     if (text.length < 8 || text.length > 1800) return false;
     if (/^[\d\s.,:;!?()[\]{}'"“”‘’\-_/\\|]+$/.test(text)) return false;
-    return !hasLargeTranslatableChildren(node);
+    return !hasMeaningfulTranslationChild(node);
   }
 
-  function hasLargeTranslatableChildren(node) {
-    for (const child of node.querySelectorAll(TRANSLATABLE_SELECTOR)) {
+  function hasMeaningfulTranslationChild(node) {
+    for (const child of node.querySelectorAll(`${TRANSLATABLE_SELECTOR},${TRANSLATION_FALLBACK_SELECTOR}`)) {
       if (child === node || child.closest(".custom-ai-assistant-inline-translation")) continue;
       const text = normalizeText(child.innerText || child.textContent || "");
-      if (text.length >= 8) return true;
+      if (text.length >= 8 && text.length <= 1800 && !/^[\d\s.,:;!?()[\]{}'"“”‘’\-_/\\|]+$/.test(text)) return true;
     }
     return false;
   }
