@@ -4,6 +4,7 @@
 
 ### Deliverables
 
+- Ship a `0.3.2` UI follow-up that promotes the existing selected-region clear action beside “选区域”, labels it unambiguously, and removes the page highlight through the existing `CLEAR_SELECTED_REGION` path.
 - Ship a `0.3.1` regression fix for the user-observed chain on Bilibili dynamic pages: a freshly selected region must remain the authoritative page context for chat/read/save/summary, and inline translation must find usable blocks inside `div`-heavy selected regions instead of reporting that no正文 exists.
 - Remove misleading success/fallback behavior: do not silently downgrade a selected-region question to ordinary chat, and do not render `(无内容)` as if an empty provider response were a valid answer; surface the actual failing stage with a retryable message.
 - Release extension version `0.3.0` with multiple editable chat-model instances. Each instance owns its display name, provider preset, base URL, API key, model ID, and an explicit vision-capability flag.
@@ -16,6 +17,7 @@
 
 ### Non-goals
 
+- Do not overload “清空” conversation history with page-context mutation; keep chat clearing and selected-region clearing as separate, explicit actions.
 - No Bilibili private API scraping, automatic expansion of hidden feeds/danmaku, persisted page-text cache, or broad DOM rewrite. The fix stays ephemeral, top-frame scoped, and site-agnostic.
 - No Chrome Web Store publication, remote repository push, new backend, account system, UI framework, SDK dependency, arbitrary model-generated code, or model-generated selector execution.
 - No persistence of page text, DOM snapshots, credentials, or raw model-planner output in page recipes; store only origin, page type, operation, validated selectors, and timestamps.
@@ -24,6 +26,7 @@
 
 ### File Scope
 
+- The `0.3.2` follow-up is bounded to moving/renaming the existing `clearRegion` control in `src/sidepanel/sidepanel.html`, the smallest matching layout change in `src/sidepanel/sidepanel.css`, version metadata, and `CONTEXT.md`; no new handler or permission is required.
 - Hotfix investigation and implementation are bounded to `src/sidepanel/sidepanel.js`, `src/content/contentScript.js`, the smallest existing shared helper if a test seam is required, focused tests, version metadata, and `CONTEXT.md`.
 - Model instance contract, migration, resolution, duplication, and validation: new bounded shared helper plus `src/shared/defaults.js`, `src/shared/storage.js`, `src/shared/backup.js`, and focused tests.
 - Options instance manager and global settings: `src/options/options.html`, `src/options/options.css`, `src/options/options.js`.
@@ -47,6 +50,7 @@
 
 ### Acceptance Commands and Evidence
 
+- `clearRegion` appears exactly once in the side-panel HTML beside the primary page actions, remains disabled unless the current context is `selected-region`, and continues using the existing message path that removes `.custom-ai-assistant-selected-region`.
 - Regression evidence must cover: selected-region snapshot fallback is scoped to the same tab+URL and cleared on region/page change; selected `div` roots yield bounded, non-duplicate translatable blocks; an empty provider response becomes an explicit error; ordinary page fallback behavior remains intact.
 - Baseline `npm run verify` already passed on the inherited dirty worktree: 96/96 tests plus manifest check, import audit, build, package, and release audit.
 - Focused pure-logic tests cover legacy migration, default repair, duplicate identity, selected/default resolution, per-instance key redaction/merge, page-recipe validation/keying, and stale-recipe fallback behavior where practical.
@@ -86,7 +90,9 @@
 - Done: exact-region reselection is a no-op; a real region change or clear cancels active work, stops TTS, resets the conversation, and prevents stale translation writeback.
 - Done: a fresh independent `gpt-5.6-terra xhigh` review reports no unresolved P0-P3 finding. Final `npm run verify` passed with 116/116 tests, manifest/lint and import audits, build, package, and release audit; `git diff --check` passed with line-ending warnings only.
 - Done: non-mutating live Bilibili DOM acceptance recovered the selected marker with about 3,945 readable characters, found nine semantic translation blocks, and exercised one bounded `div` fallback block.
-- Blocked only for installed-runtime acceptance: Chrome browser control cannot open `chrome://extensions/`, so the user must click Reload for the unpacked extension before the exact Bilibili flow can be rechecked against `0.3.1`.
+- Done: `0.3.2` moves the existing `clearRegion` control beside “选区域” as “清除选择”; it keeps the established disabled-state and `CLEAR_SELECTED_REGION` handler, while “清空” remains conversation-only. The narrow layout uses two primary-action columns to preserve chat height.
+- Done: final `npm run verify` passed with 116/116 tests, manifest/lint and import audits, build, package, and release audit; `git diff --check` passed with line-ending warnings only.
+- Blocked only for installed-runtime acceptance: Chrome browser control cannot open `chrome://extensions/`, so the user must click Reload for the unpacked extension before the selected-region clear flow can be rechecked against `0.3.2`.
 
 ## Completion Gate
 
