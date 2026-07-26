@@ -1,7 +1,6 @@
 import { requestChat } from "./shared/apiClient.js";
 import { appendFloatingMessage, applyFloatingCompression, buildFloatingCompressionPrompt, buildFloatingSourcePrompt, createFloatingSession, shouldCompressFloatingSession } from "./shared/floatingMemory.js";
 import { getFloatingSessions, getFloatingSessionsForPage, getSettings, saveFloatingSession } from "./shared/storage.js";
-import { buildImageQuestionMessage } from "./shared/vision.js";
 import { resolveModelInstance } from "./shared/modelInstances.js";
 
 const CONTEXT_ACTIONS = [
@@ -108,13 +107,6 @@ async function handleMessage(message, sender) {
     return { ok: true };
   }
 
-  if (message?.type === "CAPTURE_VISIBLE_TAB") {
-    if (!sender.tab?.windowId) return { ok: false, error: "No active window" };
-    if (!(await getDefaultRequestSettings()).supportsVision) return { ok: false, error: "Default model does not support screenshots" };
-    const imageDataUrl = await chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: "png" });
-    return { ok: true, imageDataUrl };
-  }
-
   if (message?.type === "FLOATING_CHAT_LOAD") {
     return {
       ok: true,
@@ -159,8 +151,6 @@ async function handleFloatingChatMessage(message, sender) {
 
   const prompt = String(message.prompt || "").trim();
   if (!prompt) return { ok: false, error: "Empty prompt" };
-  if (message.source?.type === "screenshot" && !settings.supportsVision) return { ok: false, error: "Default model does not support screenshots" };
-
   const userMessage = buildFloatingUserMessage(session, prompt, message.source || {});
   const assistantText = await requestChat(settings, userMessage);
 
@@ -203,14 +193,6 @@ function buildFloatingUserMessage(session, prompt, source) {
     role: item.role,
     content: item.content
   }));
-
-  if (source?.type === "screenshot" && source.imageDataUrl) {
-    return [
-      { role: "system", content: system },
-      ...history,
-      buildImageQuestionMessage(source.imageDataUrl, prompt)
-    ];
-  }
 
   return [
     { role: "system", content: system },

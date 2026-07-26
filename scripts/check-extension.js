@@ -4,6 +4,9 @@ import path from "node:path";
 const root = process.cwd();
 const manifestPath = path.join(root, "manifest.json");
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const backgroundSource = fs.readFileSync(path.join(root, "src/background.js"), "utf8");
+const contentSource = fs.readFileSync(path.join(root, "src/content/contentScript.js"), "utf8");
+const sidePanelSource = fs.readFileSync(path.join(root, "src/sidepanel/sidepanel.js"), "utf8");
 
 const required = [
   "assets/icon-16.png",
@@ -44,6 +47,22 @@ for (const permission of ["activeTab", "storage", "sidePanel", "tabs"]) {
   if (!manifest.permissions.includes(permission)) {
     errors.push(`Missing permission ${permission}`);
   }
+}
+
+if (manifest.host_permissions?.length !== 1 || manifest.host_permissions[0] !== "<all_urls>") {
+  errors.push("host_permissions must be exactly [<all_urls>] for captureVisibleTab");
+}
+
+if (backgroundSource.includes("captureVisibleTab") || contentSource.includes("captureVisibleTab") || contentSource.includes("CAPTURE_VISIBLE_TAB")) {
+  errors.push("Visible-tab capture must remain inside the side panel extension page");
+}
+
+if (!contentSource.includes("if (!event.isTrusted) return;")) {
+  errors.push("Injected quick actions must reject synthetic clicks");
+}
+
+if (!sidePanelSource.includes("chrome.tabs.captureVisibleTab")) {
+  errors.push("Missing side-panel visible-tab capture");
 }
 
 if (!manifest.commands?.["open-assistant"] || !manifest.commands?.["summarize-page"]) {

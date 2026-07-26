@@ -14,7 +14,7 @@ Depending on the user action, the request may include:
 
 - Chat messages typed into the side panel.
 - Current page or selected-region text when the user sends a side panel question from a webpage.
-- Current page, selected text, or screenshot context when the user sends a message from an in-page floating chat window.
+- Current page or selected text when the user sends a message from an in-page floating chat window.
 - Selected text from the active page.
 - Extracted text from the active page.
 - YouTube page metadata, description, visible transcript, and visible page text.
@@ -24,7 +24,7 @@ Depending on the user action, the request may include:
 - Current page or selected-region text when the user explicitly starts TTS playback.
 - On the first user-triggered page-grounded operation for an origin, page type, and operation without a usable local recipe, bounded local candidate labels and previews for that action. The selected configured model receives one non-streaming planning request and can return only candidate IDs.
 
-No page content is sent automatically on page load. User action is required. When the user sends a side panel or floating-chat question on a readable webpage, the extension includes the current page, selected-region, selected-text, or screenshot context for that action. TTS text is sent only when the user clicks the read control, and only to the configured TTS endpoint. Blank TTS URL and key inherit the selected chat instance for that request.
+No page content is sent automatically on page load. User action is required. Side-panel questions can include current-page, selected-region, selected-text, or explicit screenshot context; floating-chat questions can include current-page or selected-text context. TTS text is sent only when the user clicks the read control, and only to the configured TTS endpoint. Blank TTS URL and key inherit the selected chat instance for that request.
 
 ## Local Storage
 
@@ -47,7 +47,7 @@ Users can export or import this data from the options page. Backups include mode
 - `sidePanel`: provides the main assistant interface.
 - `storage`: stores settings, history, and saved pages locally.
 - `tabs`: supports active tab lookup and visible-tab screenshot capture.
-- `host_permissions`: allows content scripts and local/API requests for user-configured sites and endpoints.
+- `<all_urls>` host access: broadens host permission so explicit user-triggered `captureVisibleTab` screenshots work inside the extension side panel. The in-page “图” shortcut only opens that protected extension surface; screenshot data is never returned to page DOM. Content-script injection remains limited to the HTTP/HTTPS match patterns declared in the manifest, and screenshots are never captured automatically.
 
 ## API Keys
 
@@ -57,4 +57,4 @@ Do not configure an API endpoint you do not trust. If the endpoint is remote, pa
 
 ## Project Scope
 
-This project does not modify Monica or bypass any third-party paid feature. It is an independent extension that implements similar browser assistant workflows with user-provided model access. It has no vendor backend, automatic page-load transmission, new permission, or Chrome Web Store publication as part of this release.
+This project does not modify Monica or bypass any third-party paid feature. It is an independent extension that implements similar browser assistant workflows with user-provided model access. It has no vendor backend, automatic page-load transmission or screenshot capture, or Chrome Web Store publication as part of this release.

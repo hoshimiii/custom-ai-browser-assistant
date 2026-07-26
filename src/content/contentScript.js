@@ -450,16 +450,17 @@
     rail.id = QUICK_RAIL_ID;
     rail.innerHTML = `
       <button type="button" data-floating-action="chat" title="页面浮窗对话" aria-label="页面浮窗对话">问</button>
-      <button type="button" data-floating-action="screenshot" title="截图浮窗问答" aria-label="截图浮窗问答">图</button>
+      <button type="button" data-floating-action="screenshot" title="打开侧栏截图问答" aria-label="打开侧栏截图问答">图</button>
     `;
     rail.addEventListener("click", async (event) => {
+      if (!event.isTrusted) return;
       const button = event.target.closest("button[data-floating-action]");
       if (!button) return;
       if (button.dataset.floatingAction === "chat") {
         await openFloatingSessionPicker(button.getBoundingClientRect(), { preferredSide: "left" });
       }
       if (button.dataset.floatingAction === "screenshot") {
-        await openFloatingChatFromScreenshot(button.getBoundingClientRect(), { preferredSide: "left" });
+        await openScreenshotPanel(button.getBoundingClientRect());
       }
     });
     return rail;
@@ -596,28 +597,19 @@
     }, rect);
   }
 
-  async function openFloatingChatFromScreenshot(anchorRect, placement = {}) {
-    const response = await chrome.runtime.sendMessage({ type: "CAPTURE_VISIBLE_TAB" }).catch((error) => ({
+  async function openScreenshotPanel(anchorRect) {
+    const response = await chrome.runtime.sendMessage({ type: "OPEN_SIDE_PANEL" }).catch((error) => ({
       ok: false,
       error: error.message
     }));
-    if (!response?.ok || !response.imageDataUrl) {
+    if (!response?.ok) {
       await openFloatingChat({
         type: "page",
-        label: "截图失败",
+        label: "无法打开截图问答",
         title: document.title,
-        text: `截图失败：${response?.error || "无法截取当前页面"}`
-      }, anchorRect, null, placement);
-      return;
+        text: response?.error || "无法打开侧边栏"
+      }, anchorRect);
     }
-    await openFloatingChat({
-      type: "screenshot",
-      label: "当前页面截图",
-      title: document.title,
-      text: "当前网页可视区域截图",
-      imageDataUrl: response.imageDataUrl,
-      hasImage: true
-    }, anchorRect, null, placement);
   }
 
   async function openFloatingSessionPicker(anchorRect, placement = {}) {
@@ -816,9 +808,7 @@
       type: source.type || "page",
       label: source.label || "",
       title: source.title || document.title,
-      text: source.text || "",
-      hasImage: Boolean(source.hasImage || source.imageDataUrl),
-      imageDataUrl: source.imageDataUrl || ""
+      text: source.text || ""
     };
   }
 
@@ -829,9 +819,6 @@
   }
 
   function buildFloatingSourcePreview(source) {
-    if (source.type === "screenshot" && source.imageDataUrl) {
-      return `<img src="${source.imageDataUrl}" alt="当前页面截图">`;
-    }
     const text = String(source.text || "").trim();
     return `<blockquote>${escapeHtml(text.slice(0, 420) || "当前网页上下文")}</blockquote>`;
   }

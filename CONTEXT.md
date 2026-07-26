@@ -4,6 +4,7 @@
 
 ### Deliverables
 
+- Ship a `0.3.4` screenshot-permission fix so the side panel can reliably call `chrome.tabs.captureVisibleTab` without depending on a temporary `activeTab` grant; the in-page “图” shortcut opens that protected extension surface instead of receiving screenshot pixels in page context.
 - Ship a `0.3.3` dock-position fix: the in-page launcher remains attached to the right viewport edge across reloads, window resizing, display/DPI changes, and hide/show toggles, while vertical dragging remains configurable.
 - Ship a `0.3.2` UI follow-up that promotes the existing selected-region clear action beside “选区域”, labels it unambiguously, and removes the page highlight through the existing `CLEAR_SELECTED_REGION` path.
 - Ship a `0.3.1` regression fix for the user-observed chain on Bilibili dynamic pages: a freshly selected region must remain the authoritative page context for chat/read/save/summary, and inline translation must find usable blocks inside `div`-heavy selected regions instead of reporting that no正文 exists.
@@ -18,6 +19,7 @@
 
 ### Non-goals
 
+- No automatic/background/content-script screenshot capture, screen recording, new injection surface, or optional-permission flow in `0.3.4`; capture remains an explicit action inside the extension side panel. Host access is deliberately broadened to Chrome's required `<all_urls>` token so `captureVisibleTab` is consistently authorized.
 - No free horizontal dock placement or left-edge docking in `0.3.3`; the existing hide/show control is right-edge-specific, so dragging adjusts only vertical position.
 - Do not overload “清空” conversation history with page-context mutation; keep chat clearing and selected-region clearing as separate, explicit actions.
 - No Bilibili private API scraping, automatic expansion of hidden feeds/danmaku, persisted page-text cache, or broad DOM rewrite. The fix stays ephemeral, top-frame scoped, and site-agnostic.
@@ -28,6 +30,7 @@
 
 ### File Scope
 
+- The `0.3.4` fix covers `manifest.json`, version metadata, the existing manifest validation script, the canonical privacy disclosure, `CONTEXT.md`, and the existing screenshot entry points in `src/content/contentScript.js` / `src/background.js`. The side panel remains the sole screenshot owner; no new module or dependency is added.
 - The `0.3.3` fix is bounded to the existing dock interaction/state functions in `src/content/contentScript.js`, version metadata, and `CONTEXT.md`; no new storage key, permission, stylesheet, or dependency is required.
 - The `0.3.2` follow-up is bounded to moving/renaming the existing `clearRegion` control in `src/sidepanel/sidepanel.html`, the smallest matching layout change in `src/sidepanel/sidepanel.css`, version metadata, and `CONTEXT.md`; no new handler or permission is required.
 - Hotfix investigation and implementation are bounded to `src/sidepanel/sidepanel.js`, `src/content/contentScript.js`, the smallest existing shared helper if a test seam is required, focused tests, version metadata, and `CONTEXT.md`.
@@ -53,6 +56,7 @@
 
 ### Acceptance Commands and Evidence
 
+- Manifest host access contains `<all_urls>` exactly once, and the manifest check fails if the permission is removed or visible-tab capture moves into background/page context. `captureVisibleTab` exists only in the side panel; the injected quick rail rejects synthetic clicks and routes “图” to the side panel without receiving or rendering screenshot data.
 - Dock restore ignores legacy absolute `left`, clamps the saved `top`, clears any inline horizontal offset when visible, and persists only vertical position plus hidden state. Drag, resize, and hide/show paths all preserve right-edge anchoring.
 - `clearRegion` appears exactly once in the side-panel HTML beside the primary page actions, remains disabled unless the current context is `selected-region`, and continues using the existing message path that removes `.custom-ai-assistant-selected-region`.
 - Regression evidence must cover: selected-region snapshot fallback is scoped to the same tab+URL and cleared on region/page change; selected `div` roots yield bounded, non-duplicate translatable blocks; an empty provider response becomes an explicit error; ordinary page fallback behavior remains intact.
@@ -99,7 +103,10 @@
 - Confirmed `0.3.3` root cause from the supplied screenshot, source trace, and live DOM: the dock persisted an absolute horizontal coordinate globally. On a 2,560 CSS-pixel viewport, the hidden dock retained `visibleLeft: 1336`, so expanding it restored near the center instead of the right edge.
 - Done: `0.3.3` removes persisted/free horizontal positioning, lets the existing CSS own the visible right inset, retains clamped vertical drag, and migrates legacy dock state by honoring `top` while ignoring `left`. Hide/show and resize persist only `{top, edgeHidden}`.
 - Done: independent review caught and resolved a first-use safe-area regression; a second review reports no unresolved P0-P3 finding. Final `npm run verify` passed with 116/116 tests, manifest/lint and import audits, build, package, and release audit; `git diff --check` passed with line-ending warnings only.
-- Blocked only for installed-runtime acceptance: Chrome browser control cannot open `chrome://extensions/`, so the user must click Reload for the unpacked extension before the dock fix can be rechecked against `0.3.3`.
+- Confirmed `0.3.4` root cause: Chrome documents that `captureVisibleTab` requires `<all_urls>` or an active temporary `activeTab` grant. Side-panel and content-script button clicks are not among the gestures that grant `activeTab`, so the declared permission can exist while capture still fails with the observed error.
+- Independent review found and blocked a first implementation where a synthetic click in shared page DOM could ask the background to capture another active tab and render the returned data URL back into the page. Resolved by deleting that content/background capture path, rejecting synthetic quick-rail clicks, and routing “图” to the side panel, which is now the sole screenshot owner.
+- Done: a fresh independent security re-review reports no unresolved P0-P3 finding. Final `npm run verify` passed with 116/116 tests, manifest/security and import audits, build, package, and release audit; `git diff --check` passed with line-ending warnings only.
+- Blocked only for installed-runtime acceptance: Chrome browser control cannot open `chrome://extensions/`, so the user must Reload the unpacked extension, accept any updated permission prompt, and retry screenshot capture against `0.3.4`.
 
 ## Completion Gate
 
