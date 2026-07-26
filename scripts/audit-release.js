@@ -12,6 +12,8 @@ const requiredDistFiles = [
   "src/sidepanel/sidepanel.html",
   "src/options/options.html",
   "src/content/contentScript.js",
+  "src/shared/modelInstances.js",
+  "src/shared/pageRecipes.js",
   "src/shared/tts.js",
   "assets/icon-128.png"
 ];
@@ -28,6 +30,8 @@ const requiredSourceFiles = [
   "src/shared/chunking.js",
   "src/shared/floatingMemory.js",
   "src/shared/library.js",
+  "src/shared/modelInstances.js",
+  "src/shared/pageRecipes.js",
   "src/shared/pageTypes.js",
   "src/shared/translation.js",
   "src/shared/tts.js",

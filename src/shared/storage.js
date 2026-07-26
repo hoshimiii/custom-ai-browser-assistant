@@ -1,17 +1,41 @@
-import { DEFAULT_SETTINGS, HISTORY_LIMIT, SAVED_PAGE_STORAGE_LIMIT } from "./defaults.js";
+import { HISTORY_LIMIT, SAVED_PAGE_STORAGE_LIMIT } from "./defaults.js";
 import { createBackupPayload, mergeBackupPayload } from "./backup.js";
 import { normalizeFloatingPageKey, upsertFloatingSession } from "./floatingMemory.js";
 import { removeSavedPageById, upsertSavedPage } from "./library.js";
+import { normalizeModelSettings } from "./modelInstances.js";
+import { findPageRecipe, mergePageRecipes, normalizePageRecipe, removePageRecipe, upsertPageRecipe } from "./pageRecipes.js";
 
 export async function getSettings() {
   const saved = await chrome.storage.local.get("settings");
-  return { ...DEFAULT_SETTINGS, ...(saved.settings || {}) };
+  const settings = normalizeModelSettings(saved.settings || {});
+  if (JSON.stringify(settings) !== JSON.stringify(saved.settings || {})) await chrome.storage.local.set({ settings });
+  return settings;
 }
 
 export async function saveSettings(settings) {
-  await chrome.storage.local.set({
-    settings: { ...DEFAULT_SETTINGS, ...settings }
-  });
+  await chrome.storage.local.set({ settings: normalizeModelSettings(settings) });
+}
+
+export async function getPageRecipes() {
+  const saved = await chrome.storage.local.get("pageRecipes");
+  const pageRecipes = mergePageRecipes([], saved.pageRecipes || []);
+  if (JSON.stringify(pageRecipes) !== JSON.stringify(saved.pageRecipes || [])) await chrome.storage.local.set({ pageRecipes });
+  return pageRecipes;
+}
+
+export async function findStoredPageRecipe(origin, pageType, operation) {
+  return findPageRecipe(await getPageRecipes(), origin, pageType, operation);
+}
+
+export async function savePageRecipe(recipe) {
+  if (!normalizePageRecipe(recipe)) return null;
+  const pageRecipes = upsertPageRecipe(await getPageRecipes(), recipe);
+  await chrome.storage.local.set({ pageRecipes });
+  return pageRecipes[0] || null;
+}
+
+export async function deletePageRecipe(recipeId) {
+  await chrome.storage.local.set({ pageRecipes: removePageRecipe(await getPageRecipes(), recipeId) });
 }
 
 export async function getHistory() {
@@ -77,13 +101,14 @@ export async function saveFloatingSession(session) {
 }
 
 export async function exportBackup(options = {}) {
-  const [settings, history, savedPages, floatingSessions] = await Promise.all([
+  const [settings, history, savedPages, floatingSessions, pageRecipes] = await Promise.all([
     getSettings(),
     getHistory(),
     getSavedPages(),
-    getFloatingSessions()
+    getFloatingSessions(),
+    getPageRecipes()
   ]);
-  return createBackupPayload({ settings, history, savedPages, floatingSessions }, undefined, options);
+  return createBackupPayload({ settings, history, savedPages, floatingSessions, pageRecipes }, undefined, options);
 }
 
 export async function importBackup(payload, mode = "merge") {
@@ -93,7 +118,8 @@ export async function importBackup(payload, mode = "merge") {
     settings: next.settings,
     history: next.history,
     savedPages: next.savedPages,
-    floatingSessions: next.floatingSessions
+    floatingSessions: next.floatingSessions,
+    pageRecipes: next.pageRecipes
   });
   return next;
 }

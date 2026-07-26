@@ -55,7 +55,16 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "EXTRACT_PAGE") {
-      sendResponse({ ok: true, page: extractPage() });
+      sendResponse({ ok: true, page: extractPage(message.recipeSelectors) });
+      return true;
+    }
+    if (message?.type === "GET_PAGE_CANDIDATES") {
+      const type = detectPageType(location.href, document.contentType);
+      sendResponse({
+        ok: true,
+        page: { type, title: document.title, url: location.href },
+        candidates: buildPageCandidates().map(toPublicPageCandidate)
+      });
       return true;
     }
     if (message?.type === "GET_CONTEXT_STATUS") {
@@ -73,7 +82,7 @@
       return true;
     }
     if (message?.type === "GET_TRANSLATABLE_BLOCKS") {
-      sendResponse({ ok: true, blocks: collectTranslatableBlocks(message.limit || 48), context: buildContextStatus() });
+      sendResponse({ ok: true, blocks: collectTranslatableBlocks(message.limit || 48, message.recipeSelectors), context: buildContextStatus() });
       return true;
     }
     if (message?.type === "APPLY_TRANSLATIONS") {
@@ -113,7 +122,7 @@
     injectFloatingLauncher();
   }
 
-  function extractPage() {
+  function extractPage(recipeSelectors = []) {
     const type = detectPageType(location.href, document.contentType);
     const region = getSelectedRegionSnapshot();
     if (region?.text) {
@@ -126,15 +135,22 @@
         selectedRegion: region
       };
     }
-    if (type === "youtube") {
-      return { ...extractYouTubePage(), scope: "page" };
+    const page = type === "youtube"
+      ? extractYouTubePage()
+      : { type, title: document.title, url: location.href, text: collectReadableText() };
+    const requestedSelectors = normalizeRecipeSelectors(recipeSelectors);
+    if (!requestedSelectors.length) {
+      return { ...page, scope: "page" };
     }
+    const matched = matchPageCandidates(buildPageCandidates(), requestedSelectors);
     return {
-      type,
+      ...page,
       scope: "page",
-      title: document.title,
-      url: location.href,
-      text: collectReadableText()
+      text: joinCandidateTexts(matched),
+      recipe: {
+        valid: matched.length === requestedSelectors.length && matched.length > 0,
+        matchedSelectors: matched.map((candidate) => candidate.selector)
+      }
     };
   }
 
@@ -167,6 +183,7 @@
       const host = current.hostname.toLowerCase();
       const path = current.pathname.toLowerCase();
       if ((host.includes("youtube.com") && path === "/watch") || host === "youtu.be") return "youtube";
+      if (host === "www.bilibili.com" && path.startsWith("/video/")) return "bilibili-video";
       if (path.endsWith(".pdf")) return "pdf";
     } catch {
       return "webpage";
@@ -229,6 +246,95 @@
   function collectReadableText() {
     const root = getContextRoot() || getReadableRoot();
     return root?.innerText || document.body?.innerText || "";
+  }
+
+  function buildPageCandidates() {
+    const nodes = [];
+    const seen = new Set();
+    const add = (node) => {
+      if (!node || node === document.body || seen.has(node) || nodes.length >= 17) return;
+      seen.add(node);
+      nodes.push(node);
+    };
+    for (const node of document.querySelectorAll("article,main,[role='main'],[itemprop='articleBody']")) add(node);
+    for (const node of document.querySelectorAll("[class],[id]")) {
+      if (/(article|content|description|transcript|subtitle|comment|reply|danmaku|barrage|player|feed)/i.test(`${node.id} ${String(node.className || "")}`)) add(node);
+      if (nodes.length >= 17) break;
+    }
+    if (document.body?.innerText?.trim()) nodes.push(document.body);
+
+    return nodes
+      .filter((node) => !isExtensionNode(node) && !node.closest(SKIP_SELECTOR) && isVisible(node))
+      .map((node) => ({
+        node,
+        text: normalizeText(node.innerText || node.textContent || ""),
+        selector: buildPageCandidateSignature(node)
+      }))
+      .filter((candidate) => candidate.text)
+      .slice(0, 18)
+      .map((candidate, index) => ({
+        ...candidate,
+        id: `c${index + 1}`,
+        label: buildPageCandidateLabel(candidate.node),
+        preview: candidate.text.slice(0, 280),
+        chars: candidate.text.length
+      }));
+  }
+
+  function toPublicPageCandidate(candidate) {
+    return {
+      id: candidate.id,
+      label: candidate.label,
+      preview: candidate.preview,
+      chars: candidate.chars,
+      selector: candidate.selector
+    };
+  }
+
+  function buildPageCandidateSignature(node) {
+    if (node === document.body) return "caa-page-v1/body";
+    const parts = [];
+    for (let current = node; current && current !== document.body; current = current.parentElement) {
+      const siblings = current.parentElement?.children;
+      parts.unshift(`${current.tagName.toLowerCase()}:${siblings ? Array.prototype.indexOf.call(siblings, current) : 0}`);
+    }
+    return `caa-page-v1/${parts.join("/")}`;
+  }
+
+  function buildPageCandidateLabel(node) {
+    const source = `${node.id} ${String(node.className || "")}`.toLowerCase();
+    const kind = [
+      ["transcript|subtitle", "字幕/转录"],
+      ["description", "描述"],
+      ["comment|reply", "评论"],
+      ["danmaku|barrage", "弹幕"],
+      ["article|content", "正文"],
+      ["player", "播放器"],
+      ["feed", "信息流"]
+    ].find(([pattern]) => new RegExp(pattern).test(source))?.[1] || "页面内容";
+    return `${kind} · ${node.tagName.toLowerCase()}`;
+  }
+
+  function normalizeRecipeSelectors(selectors) {
+    return [...new Set((Array.isArray(selectors) ? selectors : [])
+      .map((selector) => String(selector || "").trim())
+      .filter(Boolean))].slice(0, 4);
+  }
+
+  function matchPageCandidates(candidates, selectors) {
+    const wanted = new Set(normalizeRecipeSelectors(selectors));
+    return candidates.filter((candidate) => wanted.has(candidate.selector)).slice(0, 4);
+  }
+
+  function joinCandidateTexts(candidates) {
+    const texts = [];
+    const seen = new Set();
+    for (const candidate of candidates) {
+      if (!candidate.text || seen.has(candidate.text)) continue;
+      seen.add(candidate.text);
+      texts.push(candidate.text);
+    }
+    return texts.join("\n\n");
   }
 
   function getReadableRoot() {
@@ -914,14 +1020,14 @@
     return selectedRegion?.element?.isConnected ? selectedRegion.element : null;
   }
 
-  function collectTranslatableBlocks(limit) {
-    const root = getContextRoot() || getReadableRoot();
-    if (!root) return [];
+  function collectTranslatableBlocks(limit, recipeSelectors = []) {
+    const roots = getTranslationRoots(recipeSelectors);
+    if (!roots.length) return [];
     const nodes = [];
-    if (root.matches?.(TRANSLATABLE_SELECTOR)) {
-      nodes.push(root);
+    for (const root of roots) {
+      if (root.matches?.(TRANSLATABLE_SELECTOR)) nodes.push(root);
+      nodes.push(...root.querySelectorAll(TRANSLATABLE_SELECTOR));
     }
-    nodes.push(...root.querySelectorAll(TRANSLATABLE_SELECTOR));
 
     const seen = new Set();
     const blocks = [];
@@ -939,6 +1045,14 @@
       });
     }
     return blocks;
+  }
+
+  function getTranslationRoots(recipeSelectors) {
+    const selectedRoot = getContextRoot();
+    if (selectedRoot) return [selectedRoot];
+    const selectors = normalizeRecipeSelectors(recipeSelectors);
+    if (!selectors.length) return [getReadableRoot()].filter(Boolean);
+    return matchPageCandidates(buildPageCandidates(), selectors).map((candidate) => candidate.node);
   }
 
   function isTranslatableNode(node) {

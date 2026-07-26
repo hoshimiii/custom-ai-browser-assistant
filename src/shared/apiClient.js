@@ -62,41 +62,43 @@ export function buildChatRequest(settings, messages, overrides = {}) {
 
 export async function requestChat(settings, messages, overrides = {}) {
   const body = buildChatRequest(settings, messages, { ...overrides, stream: false });
-  const response = await fetch(buildChatCompletionsUrl(settings.baseUrl), {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${settings.apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body),
-    signal: overrides.signal
-  });
-  const payload = await safeJson(response);
-  if (!response.ok) {
-    throw new ApiError(readErrorMessage(payload, response.statusText), {
-      status: response.status,
-      payload
-    });
-  }
-  return payload?.choices?.[0]?.message?.content || "";
-}
-
-export async function streamChat(settings, messages, callbacks = {}, overrides = {}) {
-  const body = buildChatRequest(settings, messages, { ...overrides, stream: true });
-  const controller = new AbortController();
-  const signal = overrides.signal || controller.signal;
-  const timeoutMs = Math.max(Number(settings.timeoutSeconds || 120), 1) * 1000;
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
+  const request = createRequestController(settings, overrides.signal);
   try {
-    const response = await fetch(buildChatCompletionsUrl(settings.baseUrl), {
+    const response = await (overrides.fetchImpl || fetch)(buildChatCompletionsUrl(settings.baseUrl), {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${settings.apiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify(body),
-      signal
+      signal: request.signal
+    });
+    const payload = await safeJson(response);
+    if (!response.ok) {
+      throw new ApiError(readErrorMessage(payload, response.statusText), {
+        status: response.status,
+        payload
+      });
+    }
+    return payload?.choices?.[0]?.message?.content || "";
+  } finally {
+    request.cleanup();
+  }
+}
+
+export async function streamChat(settings, messages, callbacks = {}, overrides = {}) {
+  const body = buildChatRequest(settings, messages, { ...overrides, stream: true });
+  const request = createRequestController(settings, overrides.signal);
+
+  try {
+    const response = await (overrides.fetchImpl || fetch)(buildChatCompletionsUrl(settings.baseUrl), {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${settings.apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body),
+      signal: request.signal
     });
 
     if (!response.ok) {
@@ -112,7 +114,7 @@ export async function streamChat(settings, messages, callbacks = {}, overrides =
       const text = payload?.choices?.[0]?.message?.content || "";
       callbacks.onToken?.(text);
       callbacks.onDone?.(text);
-      return { abort: () => controller.abort() };
+      return { abort: request.abort };
     }
 
     const reader = response.body.getReader();
@@ -140,8 +142,30 @@ export async function streamChat(settings, messages, callbacks = {}, overrides =
     }
     callbacks.onDone?.(fullText);
   } finally {
-    clearTimeout(timeout);
+    request.cleanup();
   }
+}
+
+function createRequestController(settings, externalSignal) {
+  const controller = new AbortController();
+  const seconds = Number(settings.timeoutSeconds);
+  const timeoutMs = Math.max(Number.isFinite(seconds) ? seconds : 120, 1) * 1000;
+  const abort = () => controller.abort(new DOMException("已停止", "AbortError"));
+  const forwardAbort = () => abort();
+  if (externalSignal?.aborted) {
+    abort();
+  } else {
+    externalSignal?.addEventListener("abort", forwardAbort, { once: true });
+  }
+  const timeout = setTimeout(() => controller.abort(new DOMException("请求超时", "TimeoutError")), timeoutMs);
+  return {
+    signal: controller.signal,
+    abort,
+    cleanup() {
+      clearTimeout(timeout);
+      externalSignal?.removeEventListener("abort", forwardAbort);
+    }
+  };
 }
 
 export function consumeSseBuffer(buffer) {

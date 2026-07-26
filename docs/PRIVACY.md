@@ -4,7 +4,7 @@ Custom AI Browser Assistant is a BYOK browser extension. It does not include a v
 
 ## Data Flow
 
-The extension sends content only to the API endpoint configured by the user in the options page:
+The extension sends content only to an API endpoint configured by the user in the options page. Side-panel requests use the instance selected for that panel session; floating-chat requests use the configured default instance:
 
 ```text
 Chrome extension -> user-configured Base URL -> user-selected model provider
@@ -19,22 +19,25 @@ Depending on the user action, the request may include:
 - Extracted text from the active page.
 - YouTube page metadata, description, visible transcript, and visible page text.
 - PDF page metadata and any extractable visible text.
-- Screenshot image data when the user clicks screenshot Q&A.
+- Screenshot image data when the user clicks screenshot Q&A, and only when the selected instance is explicitly configured as vision-capable.
 - Saved-page library snapshots when the user asks questions against saved content.
 - Current page or selected-region text when the user explicitly starts TTS playback.
+- On the first user-triggered page-grounded operation for an origin, page type, and operation without a usable local recipe, bounded local candidate labels and previews for that action. The selected configured model receives one non-streaming planning request and can return only candidate IDs.
 
-No page content is sent automatically on page load. User action is required. When the user sends a side panel or floating-chat question on a readable webpage, the extension includes the current page, selected-region, selected-text, or screenshot context for that action. TTS text is sent only when the user clicks the read control, and only to the configured TTS endpoint.
+No page content is sent automatically on page load. User action is required. When the user sends a side panel or floating-chat question on a readable webpage, the extension includes the current page, selected-region, selected-text, or screenshot context for that action. TTS text is sent only when the user clicks the read control, and only to the configured TTS endpoint. Blank TTS URL and key inherit the selected chat instance for that request.
 
 ## Local Storage
 
 The extension stores the following data in `chrome.storage.local`:
 
-- API settings, including chat/TTS Base URLs, API keys, models, system prompt, and preferences.
+- API settings, including global TTS settings, system prompt, and preferences.
+- Local chat-model instances: name, provider preset, Base URL, API key, model, and explicit vision capability; one instance is the default.
 - Recent conversation history, if enabled.
 - Saved-page library snapshots.
 - In-page floating chat sessions, grouped by webpage URL. These store source metadata, text excerpts, chat messages, and compressed memory summaries. Screenshot image data is used for the model request but is not stored in floating session memory.
+- Page recipes keyed by origin, page type, and operation. A recipe contains only locally validated selector signatures and timestamps; it does not contain page text, DOM snapshots, raw planner output, or model-authored selectors.
 
-Users can export or import this data from the options page. Backups do not include chat or TTS API keys by default; exporting either key requires the explicit API-key opt-in. Generated TTS audio and its source text are ephemeral: they are not stored in conversation history or backups. Users can also clear stored conversation history and delete saved pages from the side panel.
+Users can export or import this data from the options page. Backups include model instances and page recipes, but do not include any API keys by default; exporting chat-instance or TTS keys requires the explicit API-key opt-in. Generated TTS audio and its source text are ephemeral: they are not stored in conversation history or backups. Users can also clear stored conversation history and delete saved pages from the side panel.
 
 ## Permissions
 
@@ -48,10 +51,10 @@ Users can export or import this data from the options page. Backups do not inclu
 
 ## API Keys
 
-API keys are stored locally in Chrome extension storage. Chat and TTS keys are included only in requests sent to their configured endpoints.
+API keys are stored locally in Chrome extension storage. Chat keys are included only in requests sent to the selected model-instance endpoint; TTS keys are included only in requests sent to the configured or inherited TTS endpoint.
 
 Do not configure an API endpoint you do not trust. If the endpoint is remote, page content and prompts sent through the extension may be processed by that remote service.
 
 ## Project Scope
 
-This project does not modify Monica or bypass any third-party paid feature. It is an independent extension that implements similar browser assistant workflows with user-provided model access.
+This project does not modify Monica or bypass any third-party paid feature. It is an independent extension that implements similar browser assistant workflows with user-provided model access. It has no vendor backend, automatic page-load transmission, new permission, or Chrome Web Store publication as part of this release.

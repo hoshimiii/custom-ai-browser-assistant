@@ -3,29 +3,37 @@ import { findPageAction, PAGE_ACTIONS, WRITING_ACTIONS } from "../shared/actions
 import { buildChunkSummaryPrompts, buildFinalSummaryPrompt, splitTextIntoChunks } from "../shared/chunking.js";
 import { DEFAULT_SETTINGS, MESSAGE_LIMIT } from "../shared/defaults.js";
 import { buildSavedPageQuestionPrompt, searchSavedPages } from "../shared/library.js";
+import { buildPagePlannerMessages, parsePagePlannerResponse } from "../shared/pageRecipes.js";
+import { buildPageIdentity } from "../shared/pageTypes.js";
 import { buildPageQuestionPrompt, buildPageSummaryPrompt, buildSearchPrompt, buildSelectionPrompt, buildWritingPrompt } from "../shared/prompts.js";
-import { clearHistory, deleteSavedPage, getHistory, getSavedPages, getSettings, saveConversation, savePageSnapshot } from "../shared/storage.js";
+import { clearHistory, deletePageRecipe, deleteSavedPage, findStoredPageRecipe, getHistory, getSavedPages, getSettings, saveConversation, savePageRecipe, savePageSnapshot } from "../shared/storage.js";
 import { buildInlineTranslationPrompt, parseInlineTranslationResponse } from "../shared/translation.js";
 import { buildImageQuestionMessage } from "../shared/vision.js";
 import { requestSpeech, splitTtsText } from "../shared/tts.js";
+import { resolveModelInstance } from "../shared/modelInstances.js";
 
 const state = {
   settings: DEFAULT_SETTINGS,
+  selectedModelInstanceId: null,
   messages: [],
   currentTabId: null,
   context: null,
+  contextIdentity: "",
+  conversationId: null,
+  conversationCreatedAt: null,
   pendingScreenshot: null,
   running: false,
   abort: null,
   busyNoticeShown: false,
   clearHistoryArmed: false,
   tts: {
-    chunks: [], index: 0, runToken: 0, abort: null, objectUrl: null, awaitingUserPlayback: false
+    chunks: [], index: 0, runToken: 0, abort: null, objectUrl: null, awaitingUserPlayback: false, settings: null
   }
 };
 
 const elements = {
-  modelLabel: document.getElementById("modelLabel"),
+  modelSelect: document.getElementById("modelSelect"),
+  modelStatus: document.getElementById("modelStatus"),
   messages: document.getElementById("messages"),
   template: document.getElementById("messageTemplate"),
   composer: document.getElementById("composer"),
@@ -69,7 +77,8 @@ init();
 
 async function init() {
   state.settings = await getSettings();
-  updateModelLabel();
+  state.selectedModelInstanceId = state.settings.defaultModelInstanceId;
+  updateModelSelector();
   renderActionButtons();
   wireEvents();
   await renderHistory();
@@ -81,6 +90,15 @@ async function init() {
 
 function wireEvents() {
   elements.openOptions.addEventListener("click", () => chrome.runtime.openOptionsPage());
+  elements.modelSelect.addEventListener("change", () => {
+    if (!ensureIdle()) {
+      elements.modelSelect.value = state.selectedModelInstanceId;
+      return;
+    }
+    state.selectedModelInstanceId = elements.modelSelect.value;
+    if (!currentRequestSettings().supportsVision) clearPendingScreenshot();
+    updateModelSelector();
+  });
   elements.composer.addEventListener("submit", async (event) => {
     event.preventDefault();
     const text = elements.promptInput.value.trim();
@@ -119,8 +137,7 @@ function wireEvents() {
   elements.saveCurrentPage.addEventListener("click", saveCurrentPageToLibrary);
   elements.librarySearch.addEventListener("input", () => renderLibrary(elements.librarySearch.value));
   elements.clearChat.addEventListener("click", () => {
-    state.messages = [];
-    elements.messages.textContent = "";
+    resetConversation();
   });
   elements.stopChat.addEventListener("click", () => {
     state.abort?.();
@@ -160,6 +177,15 @@ function wireEvents() {
       refreshContextStatus();
     }
   });
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local" || !changes.settings) return;
+    state.settings = changes.settings.newValue || DEFAULT_SETTINGS;
+    if (!state.settings.modelInstances?.some((item) => item.id === state.selectedModelInstanceId)) {
+      state.selectedModelInstanceId = state.settings.defaultModelInstanceId;
+    }
+    if (!currentRequestSettings().supportsVision) clearPendingScreenshot();
+    updateModelSelector();
+  });
 }
 
 async function consumePendingAction() {
@@ -172,10 +198,15 @@ async function consumePendingAction() {
 
 async function sendUserPrompt(text) {
   if (!ensureIdle()) return;
-  const page = await extractCurrentPage({ silent: true });
-  if (page?.text?.trim()) {
-    addMessage("user", `基于${formatPageScope(page)}提问：${text}`);
-    await askModel([{ role: "user", content: buildPageQuestionPrompt(page, text) }]);
+  const prepared = await preparePageForOperation("page-question", { silent: true });
+  if (prepared?.cancelled) return;
+  if (prepared?.page?.text?.trim()) {
+    addMessage("user", `基于${formatPageScope(prepared.page)}提问：${text}`);
+    try {
+      await askModelDuringTask([{ role: "user", content: buildPageQuestionPrompt(prepared.page, text) }], prepared.signal, prepared.settings);
+    } finally {
+      endTask();
+    }
     return;
   }
   addMessage("error", "未能读取当前网页内容，本次将按普通聊天发送。可刷新网页或使用“选择区域”后重试。");
@@ -190,13 +221,17 @@ async function runPageAction(actionId) {
     await runInlinePageTranslation();
     return;
   }
-  const page = await extractCurrentPage();
-  if (!page) return;
-  addMessage("user", `${action.label}（${formatPageScope(page)}）`);
-  if (action.id === "summary") {
-    await summarizePage(page);
-  } else {
-    await askModel([{ role: "user", content: buildPageQuestionPrompt(page, action.prompt) }]);
+  const prepared = await preparePageForOperation(action.id);
+  if (!prepared?.page) return;
+  try {
+    addMessage("user", `${action.label}（${formatPageScope(prepared.page)}）`);
+    if (action.id === "summary") {
+      await summarizePage(prepared.page, prepared.signal, prepared.settings);
+    } else {
+      await askModelDuringTask([{ role: "user", content: buildPageQuestionPrompt(prepared.page, action.prompt) }], prepared.signal, prepared.settings);
+    }
+  } finally {
+    endTask();
   }
 }
 
@@ -219,8 +254,9 @@ async function translateSelectionInline(selectionText, frameId) {
   state.abort = () => abortController.abort();
   try {
     addMessage("user", "网页内翻译选中文本");
-    const translation = await requestChat(state.settings, buildMessages([
-      { role: "user", content: buildSelectionPrompt("translate", selectionText, state.settings) }
+    const settings = currentRequestSettings();
+    const translation = await requestChat(settings, buildMessages([
+      { role: "user", content: buildSelectionPrompt("translate", selectionText, settings) }
     ]), { signal: abortController.signal });
     await sendActiveTabMessage({ type: "APPLY_SELECTION_TRANSLATION", translation }, getFrameMessageOptions(frameId));
     addMessage("assistant", translation || "(无内容)");
@@ -246,6 +282,7 @@ async function runSearchAction(query) {
 
 async function captureScreenshotForQuestion() {
   if (!ensureIdle()) return;
+  if (!ensureVisionModel()) return;
   const tab = await getActiveTab();
   if (!tab?.windowId) {
     addMessage("error", "没有可截图的当前窗口。");
@@ -262,6 +299,7 @@ async function captureScreenshotForQuestion() {
 }
 
 async function sendScreenshotQuestion(question) {
+  if (!ensureVisionModel()) return;
   if (!state.pendingScreenshot) {
     await captureScreenshotForQuestion();
     if (!state.pendingScreenshot) return;
@@ -290,11 +328,15 @@ function clearPendingScreenshot() {
 
 async function saveCurrentPageToLibrary() {
   if (!ensureIdle()) return;
-  const page = await extractCurrentPage();
-  if (!page) return;
-  const saved = await savePageSnapshot(page);
-  addMessage("assistant", `已保存到资料库：${saved.title}`);
-  await renderLibrary();
+  const prepared = await preparePageForOperation("save");
+  if (!prepared?.page) return;
+  try {
+    const saved = await savePageSnapshot(prepared.page);
+    addMessage("assistant", `已保存到资料库：${saved.title}`);
+    await renderLibrary();
+  } finally {
+    endTask();
+  }
 }
 
 async function runWritingHelp(action) {
@@ -312,8 +354,9 @@ async function runWritingHelp(action) {
   state.abort = () => abortController.abort();
   try {
     addMessage("user", "处理当前输入框文本");
-    const result = await requestChat(state.settings, buildMessages([
-      { role: "user", content: buildWritingPrompt(action, text, state.settings) }
+    const settings = currentRequestSettings();
+    const result = await requestChat(settings, buildMessages([
+      { role: "user", content: buildWritingPrompt(action, text, settings) }
     ]), { signal: abortController.signal });
     await chrome.tabs.sendMessage(tab.id, { type: "REPLACE_ACTIVE_EDITABLE", text: result });
     addMessage("assistant", result);
@@ -325,33 +368,28 @@ async function runWritingHelp(action) {
 }
 
 async function runInlinePageTranslation() {
-  const tab = await getActiveTab();
-  if (!tab?.id) {
-    addMessage("error", "没有可翻译的当前标签页。");
-    return;
-  }
-  const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_TRANSLATABLE_BLOCKS", limit: 48 }).catch(() => null);
-  const blocks = response?.blocks || [];
-  if (!response?.ok || !blocks.length) {
-    addMessage("error", "未找到可翻译的网页正文块。可以先点击“选择区域”限定正文范围。");
-    return;
-  }
-
-  if (!beginTask()) return;
-  const abortController = new AbortController();
-  state.abort = () => abortController.abort();
-  const batches = buildTranslationBatches(blocks);
+  if (!ensureIdle()) return;
+  const prepared = await preparePageForOperation("translate-page");
+  if (!prepared?.page) return;
   try {
+    const response = await sendActiveTabMessage({ type: "GET_TRANSLATABLE_BLOCKS", limit: 48, recipeSelectors: prepared.selectors });
+    const blocks = response?.blocks || [];
+    if (!response?.ok || !blocks.length) {
+      addMessage("error", "未找到可翻译的网页正文块。可以先点击“选择区域”限定正文范围。");
+      return;
+    }
+    const batches = buildTranslationBatches(blocks);
+    const settings = prepared.settings;
     addMessage("user", `网页内翻译（${response.context?.label || "当前网页"}，${blocks.length} 个文本块）`);
     for (let index = 0; index < batches.length; index += 1) {
-      if (abortController.signal.aborted) throw new Error("已停止");
+      if (prepared.signal.aborted) throw new Error("已停止");
       const batch = batches[index];
       addMessage("assistant", `正在翻译第 ${index + 1}/${batches.length} 批，${batch.length} 个文本块。`);
-      const raw = await requestChat(state.settings, buildMessages([
-        { role: "user", content: buildInlineTranslationPrompt(batch, state.settings) }
-      ]), { signal: abortController.signal });
+      const raw = await requestChat(settings, buildMessages([
+        { role: "user", content: buildInlineTranslationPrompt(batch, settings) }
+      ]), { signal: prepared.signal });
       const translations = parseInlineTranslationResponse(raw);
-      await chrome.tabs.sendMessage(tab.id, { type: "APPLY_TRANSLATIONS", translations });
+      await sendActiveTabMessage({ type: "APPLY_TRANSLATIONS", translations });
       addMessage("assistant", `已写入第 ${index + 1}/${batches.length} 批译文。`);
     }
     addMessage("assistant", "网页内翻译完成。可使用“隐藏译文 / 显示译文 / 清除译文”控制页面显示。");
@@ -407,21 +445,21 @@ async function askModel(newMessages) {
   const abortController = new AbortController();
   state.abort = () => abortController.abort();
   try {
-    await askModelDuringTask(newMessages, abortController.signal);
+    await askModelDuringTask(newMessages, abortController.signal, currentRequestSettings());
   } finally {
     endTask();
   }
 }
 
-async function askModelDuringTask(newMessages, signal) {
+async function askModelDuringTask(newMessages, signal, settings = currentRequestSettings()) {
   state.running = true;
 
   const assistantNode = addMessage("assistant", "");
   let fullText = "";
   try {
     const messages = buildMessages(newMessages);
-    if (state.settings.stream) {
-      await streamChat(state.settings, messages, {
+    if (settings.stream) {
+      await streamChat(settings, messages, {
         onToken: (token, total) => {
           fullText = total;
           assistantNode.querySelector(".content").textContent = total;
@@ -432,7 +470,7 @@ async function askModelDuringTask(newMessages, signal) {
         }
       }, { signal });
     } else {
-      fullText = await requestChat(state.settings, messages, { signal });
+      fullText = await requestChat(settings, messages, { signal });
       assistantNode.querySelector(".content").textContent = fullText;
     }
     if (!fullText) {
@@ -448,35 +486,29 @@ async function askModelDuringTask(newMessages, signal) {
   }
 }
 
-async function summarizePage(page) {
+async function summarizePage(page, signal, settings) {
   const chunks = splitTextIntoChunks(page.text || "", state.settings.pageChunkChars);
   if (chunks.length <= 1) {
-    await askModel([{ role: "user", content: buildPageSummaryPrompt(page) }]);
+    await askModelDuringTask([{ role: "user", content: buildPageSummaryPrompt(page) }], signal, settings);
     return;
   }
-
-  if (!beginTask()) return;
-  const abortController = new AbortController();
-  state.abort = () => abortController.abort();
   try {
     addMessage("assistant", `页面较长，正在分 ${chunks.length} 段摘要后汇总。`);
     const chunkPrompts = buildChunkSummaryPrompts(page, state.settings.pageChunkChars);
     const partials = [];
     for (const chunk of chunkPrompts) {
-      if (abortController.signal.aborted) {
+      if (signal.aborted) {
         throw new Error("已停止");
       }
-      const partial = await requestChat(state.settings, buildMessages([{ role: "user", content: chunk.prompt }]), {
-        signal: abortController.signal
+      const partial = await requestChat(settings, buildMessages([{ role: "user", content: chunk.prompt }]), {
+        signal
       });
       partials.push(partial);
       addMessage("assistant", `分块 ${chunk.index + 1}/${chunk.total} 摘要完成。`);
     }
-    await askModelDuringTask([{ role: "user", content: buildFinalSummaryPrompt(page, partials) }], abortController.signal);
+    await askModelDuringTask([{ role: "user", content: buildFinalSummaryPrompt(page, partials) }], signal, settings);
   } catch (error) {
     addMessage("error", `长页面摘要失败：${error.message}`);
-  } finally {
-    endTask();
   }
 }
 
@@ -495,13 +527,20 @@ async function extractCurrentPage(options = {}) {
     updateUnavailableContext("没有可读取的当前标签页");
     return null;
   }
+  syncConversationContext(tab);
   state.currentTabId = tab.id;
-  const response = await chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_PAGE" }).catch(() => null);
-  if (!response?.ok || !response.page?.text) {
+  const response = await chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_PAGE", recipeSelectors: options.recipeSelectors }, { frameId: 0 }).catch(() => null);
+  if (!response?.ok || (!response.page?.text && !options.allowEmpty)) {
     if (!options.silent) addMessage("error", "无法读取当前页面。请刷新页面、换到普通网页，或使用“选择区域”后重试。");
     updateUnavailableContext("无法读取当前页面");
     return null;
   }
+  const activeTab = await getActiveTab();
+  if (buildPageIdentity(activeTab?.id, activeTab?.url) !== buildPageIdentity(tab.id, response.page.url)) {
+    return null;
+  }
+  if (options.recipeSelectors && !response.page.recipe?.valid) return response.page;
+  syncConversationContext(tab, response.page.url);
   state.context = {
     mode: response.page.scope === "selected-region" ? "selected-region" : "page",
     label: response.page.scope === "selected-region" ? response.page.selectedRegion?.label || "选中区域" : "当前网页",
@@ -514,18 +553,106 @@ async function extractCurrentPage(options = {}) {
   return response.page;
 }
 
+async function preparePageForOperation(operation, options = {}) {
+  if (!beginTask()) return null;
+  const abortController = new AbortController();
+  const settings = currentRequestSettings();
+  let keepTask = false;
+  state.abort = () => abortController.abort();
+  try {
+    const genericPage = await extractCurrentPage({ silent: options.silent });
+    if (!genericPage) return { page: null, cancelled: abortController.signal.aborted };
+    if (abortController.signal.aborted) return { page: null, cancelled: true };
+    if (genericPage.scope === "selected-region") {
+      keepTask = true;
+      return { page: genericPage, selectors: [], settings, signal: abortController.signal };
+    }
+    const planned = await resolvePageRecipe(genericPage, operation, settings, abortController.signal);
+    if (abortController.signal.aborted) return { page: null, cancelled: true };
+    keepTask = true;
+    return planned;
+  } catch (error) {
+    if (abortController.signal.aborted) {
+      addMessage("assistant", "页面规划已停止。");
+      return { page: null, cancelled: true };
+    }
+    addMessage("error", `页面准备失败：${error.message}`);
+    return { page: null, cancelled: false };
+  } finally {
+    if (!keepTask) endTask();
+  }
+}
+
+async function resolvePageRecipe(genericPage, operation, settings, signal) {
+  const stored = await findStoredPageRecipe(genericPage.url, genericPage.type, operation);
+  if (stored) {
+    const storedPage = await extractCurrentPage({ silent: true, allowEmpty: true, recipeSelectors: stored.selectors });
+    if (signal.aborted) throw new DOMException("已停止", "AbortError");
+    if (storedPage?.recipe?.valid && storedPage.text) {
+      return { page: storedPage, selectors: storedPage.recipe.matchedSelectors, settings, signal };
+    }
+    if (storedPage) await deletePageRecipe(stored.id);
+  }
+
+  const candidateResponse = await sendActiveTabMessage({ type: "GET_PAGE_CANDIDATES" });
+  if (!candidateResponse?.ok || !Array.isArray(candidateResponse.candidates) || !candidateResponse.candidates.length) {
+    return { page: genericPage, selectors: [], settings, signal };
+  }
+  const activeTab = await getActiveTab();
+  if (buildPageIdentity(activeTab?.id, activeTab?.url) !== buildPageIdentity(state.currentTabId, candidateResponse.page?.url)) {
+    throw new Error("页面已切换");
+  }
+
+  const status = addMessage("assistant", "正在确定页面正文区域…");
+  let candidateIds;
+  try {
+    const response = await requestChat(settings, buildPagePlannerMessages(genericPage, operation, candidateResponse.candidates), { signal });
+    candidateIds = parsePagePlannerResponse(response, candidateResponse.candidates);
+  } catch (error) {
+    if (signal.aborted) throw error;
+    addMessage("assistant", "页面规划不可用，已使用通用网页内容。");
+    return { page: genericPage, selectors: [], settings, signal };
+  } finally {
+    status.remove();
+  }
+  const selectorById = new Map(candidateResponse.candidates.map((candidate) => [candidate.id, candidate.selector]));
+  const selectors = candidateIds.map((id) => selectorById.get(id)).filter(Boolean);
+  if (!selectors.length) {
+    addMessage("assistant", "页面规划结果无效，已使用通用网页内容。");
+    return { page: genericPage, selectors: [], settings, signal };
+  }
+  const plannedPage = await extractCurrentPage({ silent: true, allowEmpty: true, recipeSelectors: selectors });
+  if (!plannedPage?.recipe?.valid || !plannedPage.text) {
+    addMessage("assistant", "页面结构已变化，已使用通用网页内容。");
+    return { page: genericPage, selectors: [], settings, signal };
+  }
+  const saved = await savePageRecipe({
+    origin: genericPage.url,
+    pageType: genericPage.type,
+    operation,
+    selectors: plannedPage.recipe.matchedSelectors
+  });
+  return { page: plannedPage, selectors: saved?.selectors || plannedPage.recipe.matchedSelectors, settings, signal };
+}
+
 async function refreshContextStatus() {
   const tab = await getActiveTab();
   if (!tab?.id) {
     updateUnavailableContext("没有活动标签页");
     return;
   }
+  syncConversationContext(tab);
   state.currentTabId = tab.id;
-  const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_CONTEXT_STATUS" }).catch(() => null);
+  const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_CONTEXT_STATUS" }, { frameId: 0 }).catch(() => null);
   if (!response?.ok) {
     updateUnavailableContext("当前页面不可读取");
     return;
   }
+  const activeTab = await getActiveTab();
+  if (buildPageIdentity(activeTab?.id, activeTab?.url) !== buildPageIdentity(tab.id, response.context?.url)) {
+    return;
+  }
+  syncConversationContext(tab, response.context?.url);
   state.context = response.context;
   updateContextLabel();
 }
@@ -533,6 +660,25 @@ async function refreshContextStatus() {
 function updateUnavailableContext(label) {
   state.context = { mode: "unavailable", label, chars: 0 };
   updateContextLabel();
+}
+
+function syncConversationContext(tab, url = tab?.url) {
+  const nextIdentity = buildPageIdentity(tab?.id, url);
+  if (!nextIdentity) return;
+  if (state.contextIdentity && state.contextIdentity !== nextIdentity) {
+    state.abort?.();
+    resetConversation();
+    clearPendingScreenshot();
+    addMessage("assistant", "页面已切换，已开始新会话，避免混用上一页内容。");
+  }
+  state.contextIdentity = nextIdentity;
+}
+
+function resetConversation() {
+  state.messages = [];
+  state.conversationId = null;
+  state.conversationCreatedAt = null;
+  elements.messages.textContent = "";
 }
 
 function updateContextLabel() {
@@ -632,10 +778,14 @@ function trimMessages() {
 
 async function persist() {
   if (!state.settings.saveHistory) return;
-  await saveConversation({
+  const conversation = await saveConversation({
+    id: state.conversationId,
+    createdAt: state.conversationCreatedAt,
     title: formatMessageContent(state.messages.find((message) => message.role === "user")?.content).slice(0, 40) || "Conversation",
     messages: state.messages
   });
+  state.conversationId = conversation.id;
+  state.conversationCreatedAt = conversation.createdAt;
   await renderHistory();
 }
 
@@ -643,8 +793,37 @@ function scrollToBottom() {
   elements.messages.scrollTop = elements.messages.scrollHeight;
 }
 
-function updateModelLabel() {
-  elements.modelLabel.textContent = state.settings.model ? `Model: ${state.settings.model}` : "Not configured";
+function currentRequestSettings() {
+  return resolveModelInstance(state.settings, state.selectedModelInstanceId);
+}
+
+function updateModelSelector() {
+  const settings = currentRequestSettings();
+  elements.modelSelect.textContent = "";
+  for (const instance of state.settings.modelInstances || []) {
+    const option = document.createElement("option");
+    option.value = instance.id;
+    option.textContent = `${instance.name}${instance.model ? ` · ${instance.model}` : ""}${instance.supportsVision ? " · Vision" : " · Text"}${instance.id === state.settings.defaultModelInstanceId ? " · Default" : ""}`;
+    elements.modelSelect.append(option);
+  }
+  elements.modelSelect.value = state.selectedModelInstanceId;
+  elements.modelSelect.disabled = state.running;
+  elements.modelStatus.textContent = settings.model ? `${settings.supportsVision ? "Vision enabled" : "Text only"} · ${settings.model}` : "Not configured";
+  updateScreenshotControls();
+}
+
+function ensureVisionModel() {
+  if (currentRequestSettings().supportsVision) return true;
+  clearPendingScreenshot();
+  addMessage("error", "当前模型不支持截图问答。");
+  return false;
+}
+
+function updateScreenshotControls() {
+  const disabled = state.running || !currentRequestSettings().supportsVision;
+  for (const element of [elements.askScreenshot, elements.sendScreenshotQuestion, elements.analyzeScreenshot, elements.retakeScreenshot]) {
+    element.disabled = disabled;
+  }
 }
 
 function ensureIdle() {
@@ -680,26 +859,34 @@ function setControlsDisabled(disabled) {
   }
   elements.promptInput.disabled = disabled;
   elements.librarySearch.disabled = disabled;
+  elements.modelSelect.disabled = disabled;
+  updateScreenshotControls();
   updateContextLabel();
 }
 
 async function readCurrentPage() {
-  const page = await extractCurrentPage();
-  if (!page?.text?.trim()) return;
-  const chunks = splitTtsText(page.text);
-  if (!chunks.length) return;
-  stopTts();
-  const tts = state.tts;
-  tts.chunks = chunks;
-  tts.index = 0;
-  tts.runToken += 1;
-  tts.abort = new AbortController();
-  tts.awaitingUserPlayback = false;
-  elements.ttsStatus.hidden = false;
-  elements.stopTts.disabled = false;
-  elements.ttsProgress.max = chunks.length;
-  elements.ttsProgress.value = 0;
-  setTtsStatus(`正在生成第 1/${chunks.length} 段朗读…`);
+  if (!ensureIdle()) return;
+  const prepared = await preparePageForOperation("read");
+  if (!prepared?.page?.text?.trim()) return;
+  try {
+    const chunks = splitTtsText(prepared.page.text);
+    if (!chunks.length) return;
+    stopTts();
+    const tts = state.tts;
+    tts.chunks = chunks;
+    tts.index = 0;
+    tts.runToken += 1;
+    tts.abort = new AbortController();
+    tts.awaitingUserPlayback = false;
+    tts.settings = prepared.settings;
+    elements.ttsStatus.hidden = false;
+    elements.stopTts.disabled = false;
+    elements.ttsProgress.max = chunks.length;
+    elements.ttsProgress.value = 0;
+    setTtsStatus(`正在生成第 1/${chunks.length} 段朗读…`);
+  } finally {
+    endTask();
+  }
   await playNextTtsChunk();
 }
 
@@ -716,7 +903,7 @@ async function playNextTtsChunk() {
   const number = tts.index + 1;
   setTtsStatus(`正在生成第 ${number}/${tts.chunks.length} 段朗读…`);
   try {
-    const audioBlob = await requestSpeech(state.settings, tts.chunks[tts.index], { signal: tts.abort.signal });
+    const audioBlob = await requestSpeech(tts.settings, tts.chunks[tts.index], { signal: tts.abort.signal });
     if (token !== tts.runToken || tts.abort.signal.aborted) return;
     revokeTtsAudio();
     tts.objectUrl = URL.createObjectURL(audioBlob);
@@ -756,6 +943,7 @@ function stopTts() {
   tts.chunks = [];
   tts.index = 0;
   tts.awaitingUserPlayback = false;
+  tts.settings = null;
   elements.ttsAudio.pause();
   elements.ttsAudio.currentTime = 0;
   revokeTtsAudio();
@@ -784,6 +972,8 @@ async function renderHistory() {
     button.textContent = conversation.title || "Untitled";
     button.addEventListener("click", () => {
       state.messages = conversation.messages || [];
+      state.conversationId = conversation.id;
+      state.conversationCreatedAt = conversation.createdAt || null;
       elements.messages.textContent = "";
       for (const message of state.messages) {
         addMessage(message.role, message.content);

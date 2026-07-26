@@ -1,57 +1,136 @@
 import { requestChat } from "../shared/apiClient.js";
 import { DEFAULT_SETTINGS } from "../shared/defaults.js";
+import { createModelInstance, duplicateModelInstance, normalizeModelSettings, removeModelInstance, resolveModelInstance } from "../shared/modelInstances.js";
 import { applyProviderPreset, PROVIDER_PRESETS } from "../shared/providers.js";
 import { exportBackup, getSettings, importBackup, saveSettings } from "../shared/storage.js";
 
 const form = document.getElementById("settingsForm");
 const status = document.getElementById("status");
+const instanceList = document.getElementById("modelInstanceList");
 const testConnection = document.getElementById("testConnection");
 const exportBackupButton = document.getElementById("exportBackup");
 const importBackupInput = document.getElementById("importBackup");
 const replaceOnImport = document.getElementById("replaceOnImport");
 const includeApiKeyInBackup = document.getElementById("includeApiKeyInBackup");
+let draftSettings;
+let selectedInstanceId;
+let dirty = false;
 
 init();
 
 async function init() {
-  const settings = await getSettings();
   fillProviderPresets();
-  fillForm(settings);
+  loadDraft(await getSettings());
+  form.addEventListener("input", () => { dirty = true; });
+  form.addEventListener("change", (event) => { if (event.target !== instanceList) dirty = true; });
+  instanceList.addEventListener("change", () => {
+    syncEditorToDraft();
+    selectedInstanceId = instanceList.value;
+    renderForm();
+  });
   form.elements.providerPreset.addEventListener("change", () => {
-    fillForm(applyProviderPreset(readForm(), form.elements.providerPreset.value));
+    syncEditorToDraft();
+    updateSelectedInstance(applyProviderPreset(selectedInstance(), form.elements.providerPreset.value));
+    renderForm();
   });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    await saveSettings(readForm());
-    showStatus("已保存。");
+  document.getElementById("addModelInstance").addEventListener("click", () => {
+    syncEditorToDraft();
+    draftSettings = createModelInstance(draftSettings);
+    selectedInstanceId = draftSettings.modelInstances.at(-1).id;
+    dirty = true;
+    renderForm();
   });
-  testConnection.addEventListener("click", async () => {
-    const settings = readForm();
-    showStatus("测试中...");
-    try {
-      const text = await requestChat(settings, [
-        { role: "system", content: settings.systemPrompt },
-        { role: "user", content: "请回复：连接成功" }
-      ]);
-      showStatus(`连接成功：${text.slice(0, 80)}`);
-    } catch (error) {
-      showStatus(`连接失败：${error.message}`);
-    }
+  document.getElementById("duplicateModelInstance").addEventListener("click", () => {
+    syncEditorToDraft();
+    draftSettings = duplicateModelInstance(draftSettings, selectedInstanceId);
+    selectedInstanceId = draftSettings.modelInstances.at(-1).id;
+    dirty = true;
+    renderForm();
   });
+  document.getElementById("setDefaultModelInstance").addEventListener("click", () => {
+    syncEditorToDraft();
+    draftSettings = normalizeModelSettings({ ...draftSettings, defaultModelInstanceId: selectedInstanceId });
+    dirty = true;
+    renderForm();
+  });
+  document.getElementById("deleteModelInstance").addEventListener("click", () => {
+    syncEditorToDraft();
+    if (draftSettings.modelInstances.length === 1) return;
+    draftSettings = removeModelInstance(draftSettings, selectedInstanceId);
+    selectedInstanceId = draftSettings.modelInstances.some((item) => item.id === selectedInstanceId)
+      ? selectedInstanceId
+      : draftSettings.defaultModelInstanceId;
+    dirty = true;
+    renderForm();
+  });
+  form.addEventListener("submit", handleSave);
+  testConnection.addEventListener("click", handleTest);
   exportBackupButton.addEventListener("click", handleExportBackup);
   importBackupInput.addEventListener("change", handleImportBackup);
 }
 
-function fillForm(settings) {
-  for (const [key, value] of Object.entries({ ...DEFAULT_SETTINGS, ...settings })) {
-    const input = form.elements[key];
-    if (!input) continue;
-    if (input.type === "checkbox") {
-      input.checked = Boolean(value);
-    } else {
-      input.value = value;
-    }
+function loadDraft(settings, preferredId) {
+  draftSettings = normalizeModelSettings(settings);
+  selectedInstanceId = draftSettings.modelInstances.some((item) => item.id === preferredId)
+    ? preferredId
+    : draftSettings.defaultModelInstanceId;
+  dirty = false;
+  renderForm();
+}
+
+function renderForm() {
+  const instance = selectedInstance();
+  instanceList.textContent = "";
+  for (const item of draftSettings.modelInstances) {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = `${item.name} — ${item.model || "未设置模型"}${item.id === draftSettings.defaultModelInstanceId ? "（默认）" : ""}`;
+    option.selected = item.id === selectedInstanceId;
+    instanceList.append(option);
   }
+  fillFields(instance, ["modelInstanceName", "providerPreset", "baseUrl", "apiKey", "model", "supportsVision"], {
+    modelInstanceName: instance.name
+  });
+  fillFields(draftSettings, ["targetLanguage", "timeoutSeconds", "ttsBaseUrl", "ttsApiKey", "ttsModel", "ttsVoice", "ttsSpeed", "ttsTimeoutSeconds", "pageChunkChars", "stream", "saveHistory", "systemPrompt"]);
+  document.getElementById("deleteModelInstance").disabled = draftSettings.modelInstances.length === 1;
+  document.getElementById("setDefaultModelInstance").disabled = selectedInstanceId === draftSettings.defaultModelInstanceId;
+}
+
+function fillFields(values, keys, aliases = {}) {
+  for (const key of keys) {
+    const input = form.elements[key];
+    if (input.type === "checkbox") input.checked = Boolean(values[key]);
+    else input.value = aliases[key] ?? values[key] ?? "";
+  }
+}
+
+function selectedInstance() {
+  return draftSettings.modelInstances.find((item) => item.id === selectedInstanceId) || draftSettings.modelInstances[0];
+}
+
+function syncEditorToDraft() {
+  const globals = readGlobalFields();
+  const instance = {
+    ...selectedInstance(),
+    name: form.elements.modelInstanceName.value.trim() || selectedInstance().name,
+    providerPreset: form.elements.providerPreset.value || DEFAULT_SETTINGS.providerPreset,
+    baseUrl: form.elements.baseUrl.value.trim(),
+    apiKey: form.elements.apiKey.value.trim(),
+    model: form.elements.model.value.trim(),
+    supportsVision: form.elements.supportsVision.checked
+  };
+  draftSettings = normalizeModelSettings({
+    ...draftSettings,
+    ...globals,
+    modelInstances: draftSettings.modelInstances.map((item) => item.id === selectedInstanceId ? instance : item)
+  });
+}
+
+function updateSelectedInstance(instance) {
+  draftSettings = normalizeModelSettings({
+    ...draftSettings,
+    modelInstances: draftSettings.modelInstances.map((item) => item.id === selectedInstanceId ? instance : item)
+  });
 }
 
 function fillProviderPresets() {
@@ -64,12 +143,8 @@ function fillProviderPresets() {
   }
 }
 
-function readForm() {
+function readGlobalFields() {
   return {
-    providerPreset: form.elements.providerPreset.value || DEFAULT_SETTINGS.providerPreset,
-    baseUrl: form.elements.baseUrl.value.trim(),
-    apiKey: form.elements.apiKey.value.trim(),
-    model: form.elements.model.value.trim(),
     targetLanguage: form.elements.targetLanguage.value.trim() || DEFAULT_SETTINGS.targetLanguage,
     timeoutSeconds: Number(form.elements.timeoutSeconds.value || DEFAULT_SETTINGS.timeoutSeconds),
     ttsBaseUrl: form.elements.ttsBaseUrl.value.trim(),
@@ -85,9 +160,31 @@ function readForm() {
   };
 }
 
-function showStatus(message) {
-  status.textContent = message;
+async function handleSave(event) {
+  event.preventDefault();
+  syncEditorToDraft();
+  const selectedId = selectedInstanceId;
+  await saveSettings(draftSettings);
+  loadDraft(await getSettings(), selectedId);
+  showStatus("已保存。");
 }
+
+async function handleTest() {
+  syncEditorToDraft();
+  const settings = resolveModelInstance(draftSettings, selectedInstanceId);
+  showStatus("测试中...");
+  try {
+    const text = await requestChat(settings, [
+      { role: "system", content: settings.systemPrompt },
+      { role: "user", content: "请回复：连接成功" }
+    ]);
+    showStatus(`连接成功：${text.slice(0, 80)}`);
+  } catch (error) {
+    showStatus(`连接失败：${error.message}`);
+  }
+}
+
+function showStatus(message) { status.textContent = message; }
 
 async function handleExportBackup() {
   const payload = await exportBackup({ includeApiKey: includeApiKeyInBackup.checked });
@@ -104,11 +201,11 @@ async function handleExportBackup() {
 async function handleImportBackup() {
   const file = importBackupInput.files?.[0];
   if (!file) return;
+  if (dirty && !confirm("当前未保存的设置将丢失，继续导入吗？")) { importBackupInput.value = ""; return; }
   try {
-    const raw = await file.text();
-    const mode = replaceOnImport.checked ? "replace" : "merge";
-    await importBackup(JSON.parse(raw), mode);
-    fillForm(await getSettings());
+    const selectedId = selectedInstanceId;
+    await importBackup(JSON.parse(await file.text()), replaceOnImport.checked ? "replace" : "merge");
+    loadDraft(await getSettings(), selectedId);
     showStatus("导入完成。");
   } catch (error) {
     showStatus(`导入失败：${error.message}`);

@@ -2,6 +2,7 @@ import { requestChat } from "./shared/apiClient.js";
 import { appendFloatingMessage, applyFloatingCompression, buildFloatingCompressionPrompt, buildFloatingSourcePrompt, createFloatingSession, shouldCompressFloatingSession } from "./shared/floatingMemory.js";
 import { getFloatingSessions, getFloatingSessionsForPage, getSettings, saveFloatingSession } from "./shared/storage.js";
 import { buildImageQuestionMessage } from "./shared/vision.js";
+import { resolveModelInstance } from "./shared/modelInstances.js";
 
 const CONTEXT_ACTIONS = [
   { id: "explain", title: "Explain with AI" },
@@ -67,11 +68,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleMessage(message, sender) {
   if (message?.type === "GET_SETTINGS_STATUS") {
-    const settings = await getSettings();
+    const settings = await getDefaultRequestSettings();
     return {
       ok: true,
       configured: Boolean(settings.baseUrl && settings.apiKey && settings.model),
-      model: settings.model || ""
+      model: settings.model || "",
+      supportsVision: Boolean(settings.supportsVision)
     };
   }
 
@@ -108,6 +110,7 @@ async function handleMessage(message, sender) {
 
   if (message?.type === "CAPTURE_VISIBLE_TAB") {
     if (!sender.tab?.windowId) return { ok: false, error: "No active window" };
+    if (!(await getDefaultRequestSettings()).supportsVision) return { ok: false, error: "Default model does not support screenshots" };
     const imageDataUrl = await chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: "png" });
     return { ok: true, imageDataUrl };
   }
@@ -142,7 +145,7 @@ async function handleMessage(message, sender) {
 }
 
 async function handleFloatingChatMessage(message, sender) {
-  const settings = await getSettings();
+  const settings = await getDefaultRequestSettings();
   const sessions = await getFloatingSessions();
   const now = Date.now();
   let session = sessions.find((item) => item.id === message.sessionId);
@@ -156,6 +159,7 @@ async function handleFloatingChatMessage(message, sender) {
 
   const prompt = String(message.prompt || "").trim();
   if (!prompt) return { ok: false, error: "Empty prompt" };
+  if (message.source?.type === "screenshot" && !settings.supportsVision) return { ok: false, error: "Default model does not support screenshots" };
 
   const userMessage = buildFloatingUserMessage(session, prompt, message.source || {});
   const assistantText = await requestChat(settings, userMessage);
@@ -167,7 +171,7 @@ async function handleFloatingChatMessage(message, sender) {
 }
 
 async function handleFloatingChatCompression(message) {
-  const settings = await getSettings();
+  const settings = await getDefaultRequestSettings();
   const sessions = await getFloatingSessions();
   const session = sessions.find((item) => item.id === message.sessionId);
   if (!session || !shouldCompressFloatingSession(session)) {
@@ -180,6 +184,11 @@ async function handleFloatingChatCompression(message) {
   const compressed = applyFloatingCompression(session, summary);
   await saveFloatingSession(compressed);
   return { ok: true, compressed: true, session: compressed };
+}
+
+async function getDefaultRequestSettings() {
+  const settings = await getSettings();
+  return resolveModelInstance(settings, settings.defaultModelInstanceId);
 }
 
 function buildFloatingUserMessage(session, prompt, source) {

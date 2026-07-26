@@ -8,12 +8,23 @@ export function detectPageType(url, mimeType = "") {
     const path = parsed.pathname.toLowerCase();
     if (host.includes("youtube.com") && path === "/watch") return "youtube";
     if (host === "youtu.be") return "youtube";
+    if (host === "www.bilibili.com" && path.startsWith("/video/")) return "bilibili-video";
     if (path.endsWith(".pdf")) return "pdf";
   } catch {
     return "webpage";
   }
 
   return "webpage";
+}
+
+export function buildPageIdentity(tabId, url) {
+  let normalizedUrl = String(url || "").trim();
+  try {
+    normalizedUrl = new URL(normalizedUrl).href;
+  } catch {
+    // Keep browser-internal or partial URLs comparable without rejecting them.
+  }
+  return Number.isInteger(tabId) && normalizedUrl ? `${tabId}:${normalizedUrl}` : "";
 }
 
 export function buildPageContext(page) {
@@ -37,6 +48,15 @@ export function buildPageContext(page) {
       `URL：${page.url || "未知"}`,
       page.text ? `可提取文本：\n${page.text}` : "未能直接提取 PDF 文本，请尝试选中文本后使用划词工具，或后续接入 PDF 解析服务。"
     ].join("\n\n");
+  }
+
+  if (type === "bilibili-video") {
+    return [
+      "页面类型：哔哩哔哩视频",
+      `视频标题：${page.title || "无标题"}`,
+      `视频 URL：${page.url || "未知"}`,
+      page.text ? `页面可见文本：\n${page.text}` : ""
+    ].filter(Boolean).join("\n\n");
   }
 
   return [

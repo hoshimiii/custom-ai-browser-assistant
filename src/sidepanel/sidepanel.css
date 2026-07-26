@@ -100,13 +100,27 @@ h1 {
   white-space: nowrap;
 }
 
-#modelLabel {
-  margin: 4px 0 0;
+#modelSelect,
+.model-status {
+  width: 100%;
+  margin-top: 4px;
   overflow: hidden;
   color: var(--muted);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#modelSelect {
+  min-height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 3px 6px;
+}
+
+.model-status {
+  display: block;
 }
 
 button {
@@ -137,7 +151,8 @@ button:active:not(:disabled) {
 
 button:focus-visible,
 textarea:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 3px solid rgba(15, 118, 110, 0.22);
   outline-offset: 2px;
 }

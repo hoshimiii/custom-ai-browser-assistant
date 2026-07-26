@@ -20,6 +20,11 @@ test("createBackupPayload redacts both keys unless explicitly included", () => {
   assert.equal(payload.settings.ttsApiKey, "tts-secret");
 });
 
+test("createBackupPayload redacts every model-instance key", () => {
+  const payload = createBackupPayload({ settings: { modelInstances: [{ id: "one", name: "One", apiKey: "secret" }], defaultModelInstanceId: "one" } }, "now");
+  assert.equal(payload.settings.modelInstances[0].apiKey, "");
+});
+
 test("parseBackupPayload rejects wrong app marker", () => {
   assert.throws(() => parseBackupPayload({ version: BACKUP_VERSION, app: "other" }), /不是有效/);
 });
@@ -42,6 +47,14 @@ test("mergeBackupPayload merges arrays by id", () => {
   assert.equal(merged.floatingSessions.length, 2);
 });
 
+test("backup imports and merges page recipes by their bounded IDs", () => {
+  const current = createBackupPayload({ pageRecipes: [{ origin: "https://example.com", pageType: "webpage", operation: "chat", selectors: ["main"] }] }, "old");
+  const backup = createBackupPayload({ pageRecipes: [{ origin: "https://example.com", pageType: "webpage", operation: "chat", selectors: ["article"], text: "discard" }] }, "new");
+  const merged = mergeBackupPayload(current, backup);
+  assert.deepEqual(merged.pageRecipes[0].selectors, ["article"]);
+  assert.equal("text" in merged.pageRecipes[0], false);
+});
+
 test("mergeBackupPayload replace mode returns backup data", () => {
   const current = createBackupPayload({ history: [{ id: "a" }] }, "old");
   const backup = createBackupPayload({ history: [{ id: "b" }] }, "new");
@@ -56,6 +69,30 @@ test("mergeBackupPayload preserves current keys when backup omits them", () => {
   assert.equal(merged.settings.model, "new-model");
   assert.equal(merged.settings.apiKey, "current-key");
   assert.equal(merged.settings.ttsApiKey, "current-tts-key");
+});
+
+test("mergeBackupPayload keeps matching redacted instance keys and never transfers them across IDs", () => {
+  const current = createBackupPayload({ settings: {
+    modelInstances: [{ id: "one", name: "One", apiKey: "one-key" }, { id: "two", name: "Two", apiKey: "two-key" }],
+    defaultModelInstanceId: "one"
+  } }, "old", { includeApiKey: true });
+  const backup = createBackupPayload({ settings: {
+    modelInstances: [{ id: "one", name: "Renamed" }, { id: "three", name: "Three" }],
+    defaultModelInstanceId: "three"
+  } }, "new");
+  const merged = mergeBackupPayload(current, backup);
+  assert.deepEqual(merged.settings.modelInstances.map((item) => [item.id, item.apiKey]), [["one", "one-key"], ["three", ""], ["two", "two-key"]]);
+  assert.equal(merged.settings.modelInstances[0].name, "Renamed");
+});
+
+test("legacy flat backup overlays the current default without changing its identity", () => {
+  const current = createBackupPayload({ settings: { modelInstances: [{ id: "current", name: "Old", apiKey: "keep", model: "old" }], defaultModelInstanceId: "current" } }, "old", { includeApiKey: true });
+  const legacy = { version: BACKUP_VERSION, app: "custom-ai-browser-assistant", settings: { model: "new", apiKey: "" }, history: [], savedPages: [], floatingSessions: [] };
+  const merged = mergeBackupPayload(current, legacy);
+  assert.equal(merged.settings.defaultModelInstanceId, "current");
+  assert.equal(merged.settings.modelInstances[0].id, "current");
+  assert.equal(merged.settings.modelInstances[0].model, "new");
+  assert.equal(merged.settings.modelInstances[0].apiKey, "keep");
 });
 
 test("importBackup merge preserves existing redacted keys", async () => {

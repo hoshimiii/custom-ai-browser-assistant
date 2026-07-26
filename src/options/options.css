@@ -1,158 +1,32 @@
-:root {
-  font-family: Arial, "Microsoft YaHei", sans-serif;
-  background: #f6f8fa;
-  color: #24292f;
-}
-
-body {
-  margin: 0;
-}
-
-main {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 32px 20px;
-}
-
-h1 {
-  font-size: 24px;
-  margin: 0 0 24px;
-}
-
-h2 {
-  font-size: 18px;
-  margin: 0 0 8px;
-}
-
-form {
-  display: grid;
-  gap: 16px;
-}
-
-fieldset {
-  display: grid;
-  gap: 16px;
-  margin: 0;
-  padding: 16px;
-  border: 1px solid #d8dee4;
-  border-radius: 8px;
-}
-
-legend {
-  padding: 0 6px;
-  font-weight: 700;
-}
-
-label {
-  display: grid;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-input,
-select,
-textarea {
-  border: 1px solid #d0d7de;
-  border-radius: 8px;
-  font: inherit;
-  font-weight: 400;
-  padding: 10px;
-}
-
-textarea {
-  resize: vertical;
-}
-
-.checkbox {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-button {
-  border: 1px solid #d0d7de;
-  border-radius: 6px;
-  background: #ffffff;
-  cursor: pointer;
-  font: inherit;
-  padding: 8px 12px;
-}
-
-button[type="submit"] {
-  background: #0969da;
-  border-color: #0969da;
-  color: #ffffff;
-}
-
-.backup-panel,
-.shortcut-panel {
-  margin-top: 28px;
-  padding-top: 20px;
-  border-top: 1px solid #d8dee4;
-}
-
-.backup-panel p,
-.shortcut-panel p {
-  color: #57606a;
-  font-size: 13px;
-}
-
-.warning-text {
-  color: #9a6700 !important;
-}
-
-.shortcut-panel dl {
-  display: grid;
-  gap: 8px;
-  margin: 12px 0;
-}
-
-.shortcut-panel dl div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid #d8dee4;
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.shortcut-panel dt {
-  font-weight: 700;
-}
-
-.shortcut-panel dd {
-  margin: 0;
-  color: #0969da;
-  font-family: Consolas, monospace;
-}
-
-.file-button {
-  display: inline-flex;
-  align-items: center;
-  min-height: 34px;
-  border: 1px solid #d0d7de;
-  border-radius: 6px;
-  background: #ffffff;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 400;
-  padding: 8px 12px;
-}
-
-.file-button input {
-  display: none;
-}
-
-#status {
-  min-height: 20px;
-  color: #57606a;
-}
+:root { font-family: Arial, "Microsoft YaHei", sans-serif; background: #f6f8fa; color: #24292f; }
+body { margin: 0; }
+main { max-width: 720px; margin: 0 auto; padding: 32px 20px; }
+h1 { font-size: 24px; margin: 0 0 24px; }
+h2 { font-size: 18px; margin: 0 0 8px; }
+form, fieldset { display: grid; gap: 16px; }
+fieldset { margin: 0; padding: 16px; border: 1px solid #d8dee4; border-radius: 8px; }
+legend { padding: 0 6px; font-weight: 700; }
+label { display: grid; gap: 6px; font-size: 13px; font-weight: 700; }
+input, select, textarea { border: 1px solid #d0d7de; border-radius: 8px; font: inherit; font-weight: 400; padding: 10px; }
+textarea { resize: vertical; }
+.checkbox { display: flex; align-items: center; gap: 8px; }
+.actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+button { border: 1px solid #d0d7de; border-radius: 6px; background: #ffffff; cursor: pointer; font: inherit; padding: 8px 12px; }
+button:disabled { cursor: not-allowed; opacity: .6; }
+button[type="submit"] { background: #0969da; border-color: #0969da; color: #ffffff; }
+.model-manager { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr); gap: 16px; }
+.model-list-panel { display: grid; align-content: start; gap: 8px; }
+.model-list-panel select { min-height: 180px; }
+.model-actions { justify-content: flex-start; }
+.model-editor { min-width: 0; }
+.backup-panel, .shortcut-panel { margin-top: 28px; padding-top: 20px; border-top: 1px solid #d8dee4; }
+.backup-panel p, .shortcut-panel p { color: #57606a; font-size: 13px; }
+.warning-text { color: #9a6700 !important; }
+.shortcut-panel dl { display: grid; gap: 8px; margin: 12px 0; }
+.shortcut-panel dl div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid #d8dee4; border-radius: 8px; background: #ffffff; }
+.shortcut-panel dt { font-weight: 700; }
+.shortcut-panel dd { margin: 0; color: #0969da; font-family: Consolas, monospace; }
+.file-button { display: inline-flex; align-items: center; min-height: 34px; border: 1px solid #d0d7de; border-radius: 6px; background: #ffffff; cursor: pointer; font: inherit; font-weight: 400; padding: 8px 12px; }
+.file-button input { display: none; }
+#status { min-height: 20px; color: #57606a; }
+@media (max-width: 600px) { .model-manager { grid-template-columns: 1fr; } }

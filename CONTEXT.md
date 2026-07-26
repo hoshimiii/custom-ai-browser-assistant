@@ -1,107 +1,84 @@
 # Project Context
 
-## Objective and Acceptance
+## Current Brief
 
-### Current Brief
+### Deliverables
 
-Deliverables:
+- Release extension version `0.3.0` with multiple editable chat-model instances. Each instance owns its display name, provider preset, base URL, API key, model ID, and an explicit vision-capability flag.
+- Allow add, edit, duplicate-as-new, delete, and choose-one-default model instance in Options. Preserve the legacy single-model configuration by migrating it into one instance.
+- Add a native model `<select>` to the side panel. A new panel starts on the configured default, and every chat/page/writing request uses the currently selected instance.
+- Disable and guard screenshot workflows when the selected instance has no vision capability. Explicit TTS configuration remains global; blank TTS URL/key fall back to the selected chat instance.
+- Fix Bilibili/page extraction to address the verified top-frame routing defect, then add a bounded first-use page-planning pass: the selected model chooses from locally generated DOM candidates for each site/page-type/operation, the extension persists only the validated selector recipe, and later runs reuse or automatically refresh that recipe before producing output.
+- Refresh the build/package and reload the already-installed unpacked extension in Chrome. Verify Options, side-panel selection, vision gating, legacy migration, Bilibili extraction, and package output without sending a paid/live model request.
+- Report the shipped increments separately: shared schema and migration, Options UI, side-panel routing, page planning/extraction, and Chrome deployment.
 
-- Preserve the already-installed baseline with a local checkpoint commit (`863dbc1`).
-- Reorganize the side panel so secondary tools are grouped and the conversation area is materially larger.
-- Add text-to-speech for the current readable page context, reusing the existing selected-region workflow for partial-page reading.
-- Let the user configure an OpenAI-compatible TTS endpoint, API key, model, voice, speed, and request timeout.
-- Provide clear playback, stop, progress, and error states without storing generated audio.
-- Produce a verified `dist` build and `releases/custom-ai-browser-assistant.zip`.
+### Non-goals
 
-Non-goals:
+- No Chrome Web Store publication, remote repository push, new backend, account system, UI framework, SDK dependency, arbitrary model-generated code, or model-generated selector execution.
+- No persistence of page text, DOM snapshots, credentials, or raw model-planner output in page recipes; store only origin, page type, operation, validated selectors, and timestamps.
+- No per-message model provenance schema, automatic model routing, vision inference from model names, or remembered side-panel selection across panel recreation; each panel starts from the configured default.
+- No changes to unrelated untracked screenshots, `.playwright-cli/`, `.playwright-mcp/`, `outputs/`, or `work/`.
 
-- No Bilibili-specific danmaku API scraping or continuous live-danmaku ingestion in this version; the generic selected-region reader covers text present in the page DOM.
-- No vendor backend, account system, deployment, Chrome Web Store publication, or automatic mutation of the user's installed extension.
-- No new UI framework or SDK dependency unless the existing native HTML/CSS/JS surface proves insufficient.
-- No image/video generation or semantic knowledge-base work.
+### File Scope
 
-File scope:
+- Model instance contract, migration, resolution, duplication, and validation: new bounded shared helper plus `src/shared/defaults.js`, `src/shared/storage.js`, `src/shared/backup.js`, and focused tests.
+- Options instance manager and global settings: `src/options/options.html`, `src/options/options.css`, `src/options/options.js`.
+- Selected-instance request routing and vision gating: `src/sidepanel/sidepanel.html`, `src/sidepanel/sidepanel.css`, `src/sidepanel/sidepanel.js`, `src/background.js`, and TTS call resolution if required.
+- Page candidate/recipe contract and persistence: one shared helper, `src/content/contentScript.js`, `src/sidepanel/sidepanel.js`, `src/shared/storage.js`, `src/shared/backup.js`, and focused tests.
+- Version/release documentation only where existing checks require it: `manifest.json`, `package.json`, lockfile if present, and existing README/privacy/release files.
+- Existing dirty changes in `src/shared/apiClient.js`, `src/shared/pageTypes.js`, `src/sidepanel/sidepanel.js`, `test/apiClient.test.js`, `test/pageTypes.test.js`, and `test/storage.test.js` are accepted prerequisites and must be preserved.
 
-- Side-panel layout and behavior: `src/sidepanel/sidepanel.html`, `src/sidepanel/sidepanel.css`, `src/sidepanel/sidepanel.js`.
-- TTS settings and secret handling: `src/options/options.html`, `src/options/options.js`, `src/options/options.css`, `src/shared/defaults.js`, `src/shared/backup.js`, `test/backup.test.js`.
-- TTS request and chunking contract: new `src/shared/tts.js` plus `test/tts.test.js`.
-- Build/release metadata and required product/privacy docs: `manifest.json`, `package.json`, `scripts/check-extension.js`, `scripts/audit-release.js`, `README.md`, `docs/IMPLEMENTATION_PLAN.md`, `docs/PRIVACY.md`.
+### Settled Contracts
 
-Acceptance commands and evidence:
+- `apiClient` continues receiving one flat resolved request-settings object. A shared model-instance resolver overlays the selected/default instance onto global settings, so callers do not duplicate configuration logic.
+- Canonical settings add `modelInstances` and `defaultModelInstanceId`; compatibility fields `providerPreset`, `baseUrl`, `apiKey`, and `model` mirror the default instance for old data, floating-chat paths, and older backups.
+- Duplicate creates a new UUID-backed instance with copied fields and a distinct `（副本）` name; it never writes to the clipboard. At least one instance always exists, and deleting the default selects another instance.
+- Vision capability is explicit. Changing to a non-vision model clears a pending screenshot and disables screenshot controls; text-only operations remain available.
+- Legacy flat settings migrate with vision enabled to preserve the extension's prior screenshot behavior; a newly added blank instance starts with vision disabled and requires explicit opt-in.
+- First-use model selection is per panel session. Switching models mid-conversation is allowed and does not clear text history.
+- Page recipes are keyed by origin, detected page type, and operation. The planner may return at most four candidate IDs generated by the extension; candidate IDs are mapped locally to selectors, validated against the current page candidate set, persisted, and retried once through generic extraction if stale or unavailable. Selector strings never enter the planner prompt.
+- Page planning covers page-grounded chat, summary/analysis actions, inline page translation scope, reading/TTS, and saving a page snapshot. Explicit selected regions bypass planning and remain authoritative.
+- `EXTRACT_PAGE` and `GET_CONTEXT_STATUS` target `frameId: 0`. Live Bilibili evidence shows readable top-frame body text and an injected content script, while the current unscoped tab message can accept an arbitrary all-frames response.
+- Backups redact every model-instance API key and the TTS key unless the existing explicit include-keys option is enabled; merge imports preserve current secrets for matching instance IDs when imported secrets are redacted.
 
-- `node --test test/tts.test.js` passes TTS URL, payload, fallback, and chunking checks.
-- `npm run verify` passes tests, lint, import audit, build, package, and release audit.
-- Rendered side-panel smoke check shows grouped tools, a larger conversation surface, and accessible TTS controls at narrow Chrome side-panel width.
-- Static release inspection confirms the TTS module and UI are present in `dist` and the release zip.
+### Acceptance Commands and Evidence
 
-Stop conditions:
+- Baseline `npm run verify` already passed on the inherited dirty worktree: 96/96 tests plus manifest check, import audit, build, package, and release audit.
+- Focused pure-logic tests cover legacy migration, default repair, duplicate identity, selected/default resolution, per-instance key redaction/merge, page-recipe validation/keying, and stale-recipe fallback behavior where practical.
+- Final `npm run verify` passes, followed by `git diff --check` and root inspection of the integrated diff and preserved untracked paths.
+- A fresh `gpt-5.6-terra xhigh` reviewer reports no unresolved material correctness, security, migration, or UX finding.
+- Chrome acceptance confirms the reloaded installed extension exposes model-instance management and model select, non-vision screenshot gating works, and a claimed Bilibili video page reports usable top-frame content. No live provider request is required.
+- `releases/custom-ai-browser-assistant.zip` is rebuilt from the accepted source.
 
-- Stop implementation if a provider-specific contract beyond OpenAI-compatible `POST /audio/speech` is required.
-- Stop if the feature requires Bilibili private APIs, authentication, DRM bypass, a new remote backend, deployment, or Chrome installation/reload.
-- Stop and return to root if file scope must expand into an unapproved architecture, security, or data contract.
-- Preserve all unrelated untracked screenshots, `outputs/`, `work/`, and `.playwright-mcp/` content.
+### Stop Conditions
 
-## Constraints, Authority, and Do-Not-Change
-
-- Root owns product scope, TTS contract, integration, and final acceptance.
-- Use the existing selected-region extraction instead of adding a second page-selection system.
-- Keep API keys in `chrome.storage.local`; do not log, transmit, or include them in backups unless the existing explicit opt-in permits it.
-- Remote TTS endpoints must use HTTPS; localhost loopback may use HTTP, matching the existing chat endpoint policy.
-- Generated speech is ephemeral and must not be persisted in history or backup data.
-
-## Current Work: Done / Active / Blocked
-
-- Done: inspected repository purpose, current entry points, page extraction, side-panel flow, settings, and privacy model.
-- Done: baseline `npm run verify` passed with 83 tests and a valid package.
-- Done: committed the pre-existing iframe/floating-dock/UI-state changes as `863dbc1`.
-- Done: TTS core/settings/security implementation; focused root rerun passed 12 tests plus lint and import audit.
-- Done: grouped side-panel UI, independent TTS playback, version metadata, docs, and initial release packaging.
-- Done: resolved independent-review findings in backup merge secret preservation, failed TTS queue termination, and release-audit coverage.
-- Blocked: none. OpenViking continuity lookup was unavailable because the local service could not be reached; live repository evidence is authoritative.
-- Routing evidence: requested `gpt-5.3-codex-spark xhigh` via `codex-cli 0.144.4`; the worker's writes/tests were sandbox-declined, it expanded beyond the assigned slice, and it never emitted `turn.completed`, so it was terminated with no worktree changes and rerouted to `gpt-5.6-terra medium`.
-
-## Reasoning State: Confirmed / Provisional / Ruled Out / Unresolved
-
-- Confirmed: selected-region text already flows through `EXTRACT_PAGE`, so TTS can read a webpage subset without new content-script code.
-- Confirmed: the extension has no runtime dependencies and already supports user-configured OpenAI-compatible endpoints.
-- Confirmed: use OpenAI-compatible `POST /audio/speech` with MP3 output as the first TTS contract; the official API limit is 4,096 input characters, so chunks are capped at 3,500 characters.
-- Ruled out: adding a component SDK solely for visual grouping; native semantic controls and CSS are sufficient.
-- Unresolved: live provider audio cannot be end-to-end verified without user credentials; request construction and playback integration will be tested locally.
-
-## Decisions and Contracts
-
-- A blank TTS Base URL and API key inherit the chat Base URL and API key; TTS model remains explicit.
-- TTS input is split into bounded sequential chunks so longer selected regions can play without one oversized request.
-- TTS has independent abort/playback state so listening can continue while the chat remains usable; a dedicated Stop control aborts pending speech, pauses audio, revokes its object URL, and prevents later chunks.
-- The side panel keeps only `总结页面`, `朗读当前上下文`, and `选择区域` as primary actions. Remaining page, screenshot, translation, writing, history, and library tools move into collapsed native `<details>` groups.
-- Remove the duplicate `问当前页` button because normal composer submission already attaches current page or selected-region context.
-- Use native `<details>`, `<audio controls>`, and `<progress>` components rather than adding a UI SDK dependency.
-- `ttsApiKey` follows the same backup redaction and explicit opt-in rules as `apiKey`.
+- Stop and return to root if implementation needs a new permission, remote service, paid request, credential transmission, unapproved storage schema beyond the settled additive fields, arbitrary model-authored selectors/code, destructive action, or work outside file scope.
+- Stop if a wave must overwrite another agent's files, modify preserved untracked artifacts, or cannot retain legacy flat settings/backups.
+- Chrome Store publication, repository push, and any real provider request remain separate external actions.
 
 ## Pending List
 
-- None.
+- OpenViking continuity lookup is unavailable because the local service could not be reached; live repository and Chrome evidence are authoritative for this run.
+- Prior Spark CLI routing in this checkout did not produce a valid `turn.completed`; implementation will use the available `gpt-5.6-terra` workers unless runtime evidence materially changes.
+- Agent page planning intentionally adds one extra text-model call only the first time a site/page-type/operation lacks a usable recipe; generic extraction remains the fallback.
+- Deployment means build/package plus reload and local Chrome verification of the installed unpacked extension; it does not include Chrome Web Store publication or Git push.
+- Chrome automation cannot open `chrome://extensions/` under its URL security policy, so the installed unpacked extension still needs the user to click its Reload button before final installed-UI acceptance. No alternate browser-control or CDP workaround is permitted.
+- Page recipes use a non-atomic local read/modify/write cache. Concurrent panels can at worst lose one newly learned recipe and replan later; add cross-context serialization only if multi-window concurrency becomes common.
 
-## Verification and Remaining Risk
+## Current State
 
-- Baseline verification: `npm run verify` passed before new implementation.
-- Initial integrated verification: `npm run verify` passed with 89 tests plus lint, import audit, build, package, and release audit; visual smoke at 390x900 showed no horizontal overflow and a materially larger collapsed conversation area.
-- Independent review: P1 backup-key loss, P2 failed-queue re-entry, and P3 release-audit coverage were fixed; focused post-fix review found no open material findings. Removed tool-scroll persistence is accepted because the tool collection is now collapsed and bounded.
-- Final focused verification: 13/13 backup and TTS tests passed.
-- Final integrated verification: `npm run verify` passed with 90 tests plus lint, import audit, build, package, and release audit.
-- Final release inspection: `dist/manifest.json` is MV3 version 0.2.0; the TTS module, side-panel read action, and TTS settings exist in both `dist` and `releases/custom-ai-browser-assistant.zip`.
-- Remaining risk: browser autoplay policies may require the initial speech request to originate from a direct user click; the UI must preserve that path.
-- Remaining risk: provider-specific voice names and maximum input sizes vary; configurable model/voice and conservative chunking limit compatibility risk.
-- Remaining risk: live-provider audio and the already-installed Chrome copy were not exercised because credentials and extension reload were outside this task's authorized scope.
+- Branch: `codex/expert-user-improvements` at `a10b9ad`, with the prior accepted timeout/context/history changes still uncommitted and baseline-verified.
+- Read-only Chrome diagnosis: Bilibili video top frame contains 2,236 readable characters, the extension dock is injected, and a Bilibili dynamic page contains 4,505 readable characters. The extraction defect is therefore not missing page content.
+- Architecture approved after three independent read-only investigations: two pure shared helpers (`modelInstances.js`, `pageRecipes.js`), native Options controls, one flat request-settings resolver at call boundaries, top-frame page messages, and candidate-ID-only page planning. No dependency or permission change is required.
+- Done: shared schema/migration/resolver, instance-aware backup, and bounded page-recipe persistence passed 19/19 focused tests.
+- Done: native Options instance manager passed manifest/import checks; side-panel selected/default routing and explicit vision gates passed focused runtime checks.
+- Done: Bilibili top-frame routing, bounded first-use Agent page planning, recipe reuse/fallback, translation/read/save coverage, and release metadata are integrated.
+- Done: independent `gpt-5.6-terra xhigh` review found no unresolved P0-P3 finding; focused review checks passed 21/21 and the integrated suite passed 110/110.
+- Done: `npm run verify` passed for `0.3.0`, including 110/110 tests, lint, import audit, build, package, and release audit; `git diff --check` passed with line-ending warnings only.
+- Chrome evidence after the build: a fresh Bilibili video page has the extension dock injected and exposes readable video/comments DOM. Opening `chrome://extensions/` for the required Reload click was blocked by the browser-control URL policy.
+- Active phase: waiting for one manual Chrome Reload click, then installed Options/side-panel/vision/Bilibili acceptance.
+- Blocked: automated reload of the installed extension only; local source, build, package, and review are complete.
 
-## Remaining Work
+## Completion Gate
 
-- None.
-
-## Exact Next Action
-
-- None; the implementation and release artifacts are ready for user reload/testing.
-
-## Handoff and Completion Gate
-
-- Completion requires all acceptance commands, diff review, packaged artifacts, updated context, and no unresolved material review finding.
+- Complete only after all deliverables map to integrated source, focused and full verification pass, independent review findings are resolved, the extension is reloaded in Chrome, the Bilibili path is rechecked, the package is rebuilt, and remaining risks are explicit.

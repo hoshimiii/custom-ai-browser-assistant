@@ -9,7 +9,8 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - Side panel chat with streaming responses and default current-page context.
 - In-page floating chat windows for selected text, current page, or visible-tab screenshots.
 - Multiple isolated floating chat sessions per webpage with local memory and idle compression.
-- Configurable OpenAI-compatible `Base URL`, `API Key`, and `Model`.
+- Multiple configurable local model instances, each with a name, provider preset, OpenAI-compatible `Base URL`, `API Key`, model, and explicit vision capability; options supports add, edit, duplicate-as-new, delete, and a default instance.
+- The side panel starts each session on the default instance and uses its native model selector for chat and page actions; floating chat uses the configured default.
 - Configurable OpenAI-compatible TTS endpoint, API key, model, voice, speed, and timeout; current-page or selected-region text can be read aloud in chunks.
 - Current page summarization and question answering.
 - Action center for page analysis and writing tasks.
@@ -26,10 +27,12 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - Keyboard shortcuts for opening the assistant and page summaries.
 - Long page summarization with chunking and final synthesis.
 - Provider presets for OpenAI, OpenRouter, Ollama, LM Studio, and One API/New API style gateways.
-- YouTube-aware extraction for title, channel, description, visible transcript, and page text.
+- YouTube-aware extraction for title, channel, description, visible transcript, and page text; Bilibili video extraction reads the top frame.
 - PDF page detection with graceful fallback text handling.
 - Screenshot Q&A with automatic visible-tab capture and side panel preview for vision-capable OpenAI-compatible models.
 - Screenshot Q&A can also start directly from the in-page quick rail and opens near the trigger position.
+- Screenshot paths are blocked for an instance without explicit vision capability. TTS remains global, and blank TTS URL/key inherit the selected chat instance.
+- The first page-grounded operation for a site/page type can make one non-streaming planning request with bounded local candidate labels/previews. The model returns only candidate IDs; selectors are generated and validated locally, then reused as a recipe or replanned if stale.
 
 ## Install Locally
 
@@ -54,7 +57,7 @@ npm run package
 
 The zip is written to `releases/custom-ai-browser-assistant.zip`.
 
-Backup data from the options page before moving browsers or machines. The JSON export includes settings, history, saved pages, and floating page chat sessions.
+Backup data from the options page before moving browsers or machines. The JSON export includes settings, model instances, page recipes, history, saved pages, and floating page chat sessions. API keys remain redacted unless you explicitly opt in to include them.
 
 Default shortcuts:
 
@@ -67,7 +70,7 @@ The shortcuts are also shown in the side panel and options page. Chrome shortcut
 
 ## Configure
 
-Open the extension options page and set:
+Open the extension options page and configure one or more model instances, then select the default:
 
 ```text
 Base URL: https://your-api.example.com/v1
@@ -81,7 +84,7 @@ The API must support the OpenAI-compatible chat completions endpoint:
 POST /chat/completions
 ```
 
-For page reading, configure TTS in the options page. It uses the OpenAI-compatible endpoint below; blank TTS URL and key inherit the chat URL and key. Select a page region first when only part of a page should be read.
+For page reading, configure global TTS in the options page. It uses the OpenAI-compatible endpoint below; blank TTS URL and key inherit the selected chat instance. Select a page region first when only part of a page should be read.
 
 ```http
 POST /audio/speech
