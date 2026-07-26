@@ -434,7 +434,7 @@
     launcher.id = LAUNCHER_ID;
     launcher.type = "button";
     launcher.setAttribute("aria-label", "Open AI Assistant");
-    launcher.title = "点击打开侧边栏，拖动调整位置";
+    launcher.title = "点击打开侧边栏，垂直拖动调整位置";
     launcher.innerHTML = `
       <span class="caa-launcher-mark" aria-hidden="true">AI</span>
       <span class="caa-launcher-dot" aria-hidden="true"></span>
@@ -476,7 +476,6 @@
       dockDragStart = {
         x: event.clientX,
         y: event.clientY,
-        left: rect.left,
         top: rect.top,
         moved: false
       };
@@ -500,7 +499,7 @@
         dockDragStart.moved = true;
         dock.dataset.dragged = "true";
       }
-      placeDockAt(dock, dockDragStart.left + dx, dockDragStart.top + dy);
+      placeDockAt(dock, dockDragStart.top + dy);
     });
     document.addEventListener("mouseup", () => {
       if (!dockDragStart) return;
@@ -514,10 +513,12 @@
   async function restoreDockState(dock) {
     const saved = await chrome.storage.local.get(DOCK_STATE_KEY).catch(() => ({}));
     const state = saved[DOCK_STATE_KEY] || {};
-    if (Number.isFinite(state.left) && Number.isFinite(state.top)) {
-      placeDockAt(dock, state.left, state.top);
+    if (Number.isFinite(state.top)) {
+      placeDockAt(dock, state.top);
     }
-    setDockEdgeHidden(dock, Boolean(state.edgeHidden), { persist: false });
+    if (state.edgeHidden) {
+      setDockEdgeHidden(dock, true, { persist: false });
+    }
   }
 
   function toggleDockEdge(dock) {
@@ -527,7 +528,6 @@
   function setDockEdgeHidden(dock, hidden, options = {}) {
     const rect = dock.getBoundingClientRect();
     if (hidden) {
-      dock.dataset.visibleLeft = String(Math.round(rect.left));
       dock.dataset.visibleTop = String(Math.round(rect.top));
       dock.style.left = "auto";
       dock.style.right = "0px";
@@ -538,23 +538,20 @@
     } else {
       dock.classList.remove("is-edge-hidden");
       dock.querySelector(".caa-dock-edge-toggle").textContent = "‹";
-      const left = Number(dock.dataset.visibleLeft);
       const top = Number(dock.dataset.visibleTop);
-      if (Number.isFinite(left) && Number.isFinite(top)) {
-        placeDockAt(dock, left, top);
-      }
+      placeDockAt(dock, Number.isFinite(top) ? top : rect.top);
     }
     if (options.persist !== false) {
       saveDockState(dock, { edgeHidden: hidden });
     }
   }
 
-  function placeDockAt(dock, left, top) {
-    const width = dock.offsetWidth || 48;
+  function placeDockAt(dock, top) {
     const height = dock.offsetHeight || 104;
-    dock.style.left = `${clamp(left, 8, window.innerWidth - width - 8)}px`;
+    // ponytail: right edge only; add left-edge support when it has its own hide control.
+    dock.style.left = "auto";
+    dock.style.right = "";
     dock.style.top = `${clamp(top, 8, window.innerHeight - height - 8)}px`;
-    dock.style.right = "auto";
     dock.style.bottom = "auto";
   }
 
@@ -562,24 +559,22 @@
     if (dock.classList.contains("is-edge-hidden")) {
       const top = clamp(dock.getBoundingClientRect().top, 8, window.innerHeight - dock.offsetHeight - 8);
       dock.style.top = `${top}px`;
+      dock.dataset.visibleTop = String(Math.round(top));
       saveDockState(dock, { edgeHidden: true });
       return;
     }
     const rect = dock.getBoundingClientRect();
-    placeDockAt(dock, rect.left, rect.top);
+    placeDockAt(dock, rect.top);
     saveDockState(dock, { edgeHidden: false });
   }
 
   function saveDockState(dock, patch = {}) {
     const rect = dock.getBoundingClientRect();
-    const visibleLeft = Number(dock.dataset.visibleLeft);
     const visibleTop = Number(dock.dataset.visibleTop);
     const edgeHidden = patch.edgeHidden ?? dock.classList.contains("is-edge-hidden");
-    const left = edgeHidden && Number.isFinite(visibleLeft) ? visibleLeft : rect.left;
     const top = edgeHidden && Number.isFinite(visibleTop) ? visibleTop : rect.top;
     chrome.storage.local.set({
       [DOCK_STATE_KEY]: {
-        left: Math.round(left),
         top: Math.round(top),
         edgeHidden
       }

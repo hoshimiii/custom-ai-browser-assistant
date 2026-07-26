@@ -4,6 +4,7 @@
 
 ### Deliverables
 
+- Ship a `0.3.3` dock-position fix: the in-page launcher remains attached to the right viewport edge across reloads, window resizing, display/DPI changes, and hide/show toggles, while vertical dragging remains configurable.
 - Ship a `0.3.2` UI follow-up that promotes the existing selected-region clear action beside “选区域”, labels it unambiguously, and removes the page highlight through the existing `CLEAR_SELECTED_REGION` path.
 - Ship a `0.3.1` regression fix for the user-observed chain on Bilibili dynamic pages: a freshly selected region must remain the authoritative page context for chat/read/save/summary, and inline translation must find usable blocks inside `div`-heavy selected regions instead of reporting that no正文 exists.
 - Remove misleading success/fallback behavior: do not silently downgrade a selected-region question to ordinary chat, and do not render `(无内容)` as if an empty provider response were a valid answer; surface the actual failing stage with a retryable message.
@@ -17,6 +18,7 @@
 
 ### Non-goals
 
+- No free horizontal dock placement or left-edge docking in `0.3.3`; the existing hide/show control is right-edge-specific, so dragging adjusts only vertical position.
 - Do not overload “清空” conversation history with page-context mutation; keep chat clearing and selected-region clearing as separate, explicit actions.
 - No Bilibili private API scraping, automatic expansion of hidden feeds/danmaku, persisted page-text cache, or broad DOM rewrite. The fix stays ephemeral, top-frame scoped, and site-agnostic.
 - No Chrome Web Store publication, remote repository push, new backend, account system, UI framework, SDK dependency, arbitrary model-generated code, or model-generated selector execution.
@@ -26,6 +28,7 @@
 
 ### File Scope
 
+- The `0.3.3` fix is bounded to the existing dock interaction/state functions in `src/content/contentScript.js`, version metadata, and `CONTEXT.md`; no new storage key, permission, stylesheet, or dependency is required.
 - The `0.3.2` follow-up is bounded to moving/renaming the existing `clearRegion` control in `src/sidepanel/sidepanel.html`, the smallest matching layout change in `src/sidepanel/sidepanel.css`, version metadata, and `CONTEXT.md`; no new handler or permission is required.
 - Hotfix investigation and implementation are bounded to `src/sidepanel/sidepanel.js`, `src/content/contentScript.js`, the smallest existing shared helper if a test seam is required, focused tests, version metadata, and `CONTEXT.md`.
 - Model instance contract, migration, resolution, duplication, and validation: new bounded shared helper plus `src/shared/defaults.js`, `src/shared/storage.js`, `src/shared/backup.js`, and focused tests.
@@ -50,6 +53,7 @@
 
 ### Acceptance Commands and Evidence
 
+- Dock restore ignores legacy absolute `left`, clamps the saved `top`, clears any inline horizontal offset when visible, and persists only vertical position plus hidden state. Drag, resize, and hide/show paths all preserve right-edge anchoring.
 - `clearRegion` appears exactly once in the side-panel HTML beside the primary page actions, remains disabled unless the current context is `selected-region`, and continues using the existing message path that removes `.custom-ai-assistant-selected-region`.
 - Regression evidence must cover: selected-region snapshot fallback is scoped to the same tab+URL and cleared on region/page change; selected `div` roots yield bounded, non-duplicate translatable blocks; an empty provider response becomes an explicit error; ordinary page fallback behavior remains intact.
 - Baseline `npm run verify` already passed on the inherited dirty worktree: 96/96 tests plus manifest check, import audit, build, package, and release audit.
@@ -92,7 +96,10 @@
 - Done: non-mutating live Bilibili DOM acceptance recovered the selected marker with about 3,945 readable characters, found nine semantic translation blocks, and exercised one bounded `div` fallback block.
 - Done: `0.3.2` moves the existing `clearRegion` control beside “选区域” as “清除选择”; it keeps the established disabled-state and `CLEAR_SELECTED_REGION` handler, while “清空” remains conversation-only. The narrow layout uses two primary-action columns to preserve chat height.
 - Done: final `npm run verify` passed with 116/116 tests, manifest/lint and import audits, build, package, and release audit; `git diff --check` passed with line-ending warnings only.
-- Blocked only for installed-runtime acceptance: Chrome browser control cannot open `chrome://extensions/`, so the user must click Reload for the unpacked extension before the selected-region clear flow can be rechecked against `0.3.2`.
+- Confirmed `0.3.3` root cause from the supplied screenshot, source trace, and live DOM: the dock persisted an absolute horizontal coordinate globally. On a 2,560 CSS-pixel viewport, the hidden dock retained `visibleLeft: 1336`, so expanding it restored near the center instead of the right edge.
+- Done: `0.3.3` removes persisted/free horizontal positioning, lets the existing CSS own the visible right inset, retains clamped vertical drag, and migrates legacy dock state by honoring `top` while ignoring `left`. Hide/show and resize persist only `{top, edgeHidden}`.
+- Done: independent review caught and resolved a first-use safe-area regression; a second review reports no unresolved P0-P3 finding. Final `npm run verify` passed with 116/116 tests, manifest/lint and import audits, build, package, and release audit; `git diff --check` passed with line-ending warnings only.
+- Blocked only for installed-runtime acceptance: Chrome browser control cannot open `chrome://extensions/`, so the user must click Reload for the unpacked extension before the dock fix can be rechecked against `0.3.3`.
 
 ## Completion Gate
 
