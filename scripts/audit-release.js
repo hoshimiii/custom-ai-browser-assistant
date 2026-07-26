@@ -12,6 +12,7 @@ const requiredDistFiles = [
   "src/sidepanel/sidepanel.html",
   "src/options/options.html",
   "src/content/contentScript.js",
+  "src/shared/tts.js",
   "assets/icon-128.png"
 ];
 
@@ -29,6 +30,7 @@ const requiredSourceFiles = [
   "src/shared/library.js",
   "src/shared/pageTypes.js",
   "src/shared/translation.js",
+  "src/shared/tts.js",
   "src/shared/vision.js"
 ];
 

@@ -22,6 +22,7 @@ const required = [
   "src/shared/pageTypes.js",
   "src/shared/providers.js",
   "src/shared/translation.js",
+  "src/shared/tts.js",
   "src/shared/vision.js"
 ];
 

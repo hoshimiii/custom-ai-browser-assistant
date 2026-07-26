@@ -7,8 +7,7 @@ import { buildPageQuestionPrompt, buildPageSummaryPrompt, buildSearchPrompt, bui
 import { clearHistory, deleteSavedPage, getHistory, getSavedPages, getSettings, saveConversation, savePageSnapshot } from "../shared/storage.js";
 import { buildInlineTranslationPrompt, parseInlineTranslationResponse } from "../shared/translation.js";
 import { buildImageQuestionMessage } from "../shared/vision.js";
-
-const SIDE_PANEL_UI_STATE_KEY = "sidePanelUiState";
+import { requestSpeech, splitTtsText } from "../shared/tts.js";
 
 const state = {
   settings: DEFAULT_SETTINGS,
@@ -20,13 +19,13 @@ const state = {
   abort: null,
   busyNoticeShown: false,
   clearHistoryArmed: false,
-  toolStackScrollTimer: null
+  tts: {
+    chunks: [], index: 0, runToken: 0, abort: null, objectUrl: null, awaitingUserPlayback: false
+  }
 };
 
 const elements = {
   modelLabel: document.getElementById("modelLabel"),
-  workspace: document.querySelector(".workspace"),
-  toolStack: document.querySelector(".tool-stack"),
   messages: document.getElementById("messages"),
   template: document.getElementById("messageTemplate"),
   composer: document.getElementById("composer"),
@@ -35,7 +34,8 @@ const elements = {
   pageActions: document.getElementById("pageActions"),
   writingActions: document.getElementById("writingActions"),
   askScreenshot: document.getElementById("askScreenshot"),
-  askPage: document.getElementById("askPage"),
+  summarizePage: document.getElementById("summarizePage"),
+  readPage: document.getElementById("readPage"),
   selectRegion: document.getElementById("selectRegion"),
   clearRegion: document.getElementById("clearRegion"),
   contextMode: document.getElementById("contextMode"),
@@ -57,7 +57,12 @@ const elements = {
   librarySearch: document.getElementById("librarySearch"),
   libraryList: document.getElementById("libraryList"),
   clearChat: document.getElementById("clearChat"),
-  stopChat: document.getElementById("stopChat")
+  stopChat: document.getElementById("stopChat"),
+  ttsStatus: document.getElementById("ttsStatus"),
+  ttsMessage: document.getElementById("ttsMessage"),
+  ttsProgress: document.getElementById("ttsProgress"),
+  ttsAudio: document.getElementById("ttsAudio"),
+  stopTts: document.getElementById("stopTts")
 };
 
 init();
@@ -69,7 +74,6 @@ async function init() {
   wireEvents();
   await renderHistory();
   await renderLibrary();
-  await restoreToolStackScroll();
   await refreshContextStatus();
   await consumePendingAction();
   addMessage("assistant", "配置 API 后即可开始使用。直接输入问题会默认读取当前网页；也可以选择页面区域、截图问答或网页内翻译。");
@@ -77,7 +81,6 @@ async function init() {
 
 function wireEvents() {
   elements.openOptions.addEventListener("click", () => chrome.runtime.openOptionsPage());
-  elements.toolStack.addEventListener("scroll", saveToolStackScrollDebounced, { passive: true });
   elements.composer.addEventListener("submit", async (event) => {
     event.preventDefault();
     const text = elements.promptInput.value.trim();
@@ -89,16 +92,8 @@ function wireEvents() {
     }
     await sendUserPrompt(text);
   });
-  elements.askPage.addEventListener("click", async () => {
-    const question = elements.promptInput.value.trim();
-    if (!question) {
-      addMessage("error", "请先在底部输入框输入关于当前网页的问题。");
-      elements.promptInput.focus();
-      return;
-    }
-    elements.promptInput.value = "";
-    await runPageQuestion(question);
-  });
+  elements.summarizePage.addEventListener("click", () => runPageAction("summary"));
+  elements.readPage.addEventListener("click", readCurrentPage);
   elements.askScreenshot.addEventListener("click", captureScreenshotForQuestion);
   elements.sendScreenshotQuestion.addEventListener("click", async () => {
     const question = elements.promptInput.value.trim();
@@ -129,9 +124,10 @@ function wireEvents() {
   });
   elements.stopChat.addEventListener("click", () => {
     state.abort?.();
-    state.running = false;
-    elements.stopChat.disabled = true;
   });
+  elements.stopTts.addEventListener("click", stopTts);
+  elements.ttsAudio.addEventListener("play", handleTtsAudioPlay);
+  elements.ttsAudio.addEventListener("ended", playNextTtsChunk);
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === "SELECTION_ACTION") {
       runSelectionAction(message.action, message.selectionText, message.frameId);
@@ -164,26 +160,6 @@ function wireEvents() {
       refreshContextStatus();
     }
   });
-}
-
-async function restoreToolStackScroll() {
-  const saved = await chrome.storage.local.get(SIDE_PANEL_UI_STATE_KEY).catch(() => ({}));
-  const scrollTop = Number(saved[SIDE_PANEL_UI_STATE_KEY]?.toolStackScrollTop || 0);
-  if (!Number.isFinite(scrollTop) || scrollTop <= 0) return;
-  requestAnimationFrame(() => {
-    elements.toolStack.scrollTop = Math.min(scrollTop, elements.toolStack.scrollHeight);
-  });
-}
-
-function saveToolStackScrollDebounced() {
-  window.clearTimeout(state.toolStackScrollTimer);
-  state.toolStackScrollTimer = window.setTimeout(() => {
-    chrome.storage.local.set({
-      [SIDE_PANEL_UI_STATE_KEY]: {
-        toolStackScrollTop: Math.round(elements.toolStack.scrollTop)
-      }
-    }).catch(() => {});
-  }, 120);
 }
 
 async function consumePendingAction() {
@@ -222,14 +198,6 @@ async function runPageAction(actionId) {
   } else {
     await askModel([{ role: "user", content: buildPageQuestionPrompt(page, action.prompt) }]);
   }
-}
-
-async function runPageQuestion(question) {
-  if (!ensureIdle()) return;
-  const page = await extractCurrentPage();
-  if (!page) return;
-  addMessage("user", `基于${formatPageScope(page)}提问：${question}`);
-  await askModel([{ role: "user", content: buildPageQuestionPrompt(page, question) }]);
 }
 
 async function runSelectionAction(action, selectionText, frameId) {
@@ -414,7 +382,7 @@ function buildTranslationBatches(blocks) {
 
 function renderActionButtons() {
   elements.pageActions.textContent = "";
-  for (const action of PAGE_ACTIONS) {
+  for (const action of PAGE_ACTIONS.filter((item) => item.id !== "summary")) {
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.actionId = action.id;
@@ -707,12 +675,103 @@ function endTask() {
 
 function setControlsDisabled(disabled) {
   for (const button of document.querySelectorAll("button")) {
-    if (button === elements.stopChat || button === elements.openOptions) continue;
+    if (button === elements.stopChat || button === elements.stopTts || button === elements.openOptions) continue;
     button.disabled = disabled;
   }
   elements.promptInput.disabled = disabled;
   elements.librarySearch.disabled = disabled;
   updateContextLabel();
+}
+
+async function readCurrentPage() {
+  const page = await extractCurrentPage();
+  if (!page?.text?.trim()) return;
+  const chunks = splitTtsText(page.text);
+  if (!chunks.length) return;
+  stopTts();
+  const tts = state.tts;
+  tts.chunks = chunks;
+  tts.index = 0;
+  tts.runToken += 1;
+  tts.abort = new AbortController();
+  tts.awaitingUserPlayback = false;
+  elements.ttsStatus.hidden = false;
+  elements.stopTts.disabled = false;
+  elements.ttsProgress.max = chunks.length;
+  elements.ttsProgress.value = 0;
+  setTtsStatus(`正在生成第 1/${chunks.length} 段朗读…`);
+  await playNextTtsChunk();
+}
+
+async function playNextTtsChunk() {
+  const tts = state.tts;
+  const token = tts.runToken;
+  if (!tts.abort || tts.abort.signal.aborted || tts.awaitingUserPlayback) return;
+  if (tts.index >= tts.chunks.length) {
+    elements.ttsProgress.value = tts.chunks.length;
+    elements.stopTts.disabled = true;
+    setTtsStatus("朗读完成。");
+    return;
+  }
+  const number = tts.index + 1;
+  setTtsStatus(`正在生成第 ${number}/${tts.chunks.length} 段朗读…`);
+  try {
+    const audioBlob = await requestSpeech(state.settings, tts.chunks[tts.index], { signal: tts.abort.signal });
+    if (token !== tts.runToken || tts.abort.signal.aborted) return;
+    revokeTtsAudio();
+    tts.objectUrl = URL.createObjectURL(audioBlob);
+    elements.ttsAudio.src = tts.objectUrl;
+    elements.ttsAudio.load();
+    tts.index += 1;
+    elements.ttsProgress.value = tts.index;
+    setTtsStatus(`正在播放第 ${number}/${tts.chunks.length} 段朗读…`);
+    try {
+      await elements.ttsAudio.play();
+    } catch {
+      if (token !== tts.runToken || tts.abort.signal.aborted) return;
+      tts.awaitingUserPlayback = true;
+      setTtsStatus(`第 ${number}/${tts.chunks.length} 段已生成，点击播放器播放。`);
+    }
+  } catch (error) {
+    if (token !== tts.runToken || tts.abort?.signal.aborted) return;
+    tts.abort.abort();
+    elements.stopTts.disabled = true;
+    setTtsStatus(`朗读失败：${error.message}`);
+  }
+}
+
+function handleTtsAudioPlay() {
+  const tts = state.tts;
+  if (!tts.awaitingUserPlayback || !tts.abort || tts.abort.signal.aborted) return;
+  tts.awaitingUserPlayback = false;
+  setTtsStatus(`正在播放第 ${tts.index}/${tts.chunks.length} 段朗读…`);
+}
+
+function stopTts() {
+  const tts = state.tts;
+  const active = tts.abort || tts.objectUrl;
+  tts.runToken += 1;
+  tts.abort?.abort();
+  tts.abort = null;
+  tts.chunks = [];
+  tts.index = 0;
+  tts.awaitingUserPlayback = false;
+  elements.ttsAudio.pause();
+  elements.ttsAudio.currentTime = 0;
+  revokeTtsAudio();
+  elements.stopTts.disabled = true;
+  if (active) setTtsStatus("朗读已停止。");
+}
+
+function revokeTtsAudio() {
+  if (state.tts.objectUrl) URL.revokeObjectURL(state.tts.objectUrl);
+  state.tts.objectUrl = null;
+  elements.ttsAudio.removeAttribute("src");
+  elements.ttsAudio.load();
+}
+
+function setTtsStatus(message) {
+  elements.ttsMessage.textContent = message;
 }
 
 async function renderHistory() {

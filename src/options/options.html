@@ -50,6 +50,33 @@
           <span>System Prompt</span>
           <textarea id="systemPrompt" name="systemPrompt" rows="4"></textarea>
         </label>
+        <fieldset class="tts-settings">
+          <legend>Text to Speech</legend>
+          <label>
+            <span>TTS Base URL</span>
+            <input id="ttsBaseUrl" name="ttsBaseUrl" placeholder="留空则使用 API Base URL" autocomplete="off">
+          </label>
+          <label>
+            <span>TTS API Key</span>
+            <input id="ttsApiKey" name="ttsApiKey" type="password" placeholder="留空则使用 API Key" autocomplete="off">
+          </label>
+          <label>
+            <span>TTS Model</span>
+            <input id="ttsModel" name="ttsModel" placeholder="例如 tts-1" autocomplete="off">
+          </label>
+          <label>
+            <span>Voice</span>
+            <input id="ttsVoice" name="ttsVoice" placeholder="alloy" autocomplete="off">
+          </label>
+          <label>
+            <span>Speed</span>
+            <input id="ttsSpeed" name="ttsSpeed" type="number" min="0.25" max="4" step="0.05">
+          </label>
+          <label>
+            <span>TTS Timeout Seconds</span>
+            <input id="ttsTimeoutSeconds" name="ttsTimeoutSeconds" type="number" min="1" max="600" step="1">
+          </label>
+        </fieldset>
         <div class="actions">
           <button id="testConnection" type="button">Test</button>
           <button type="submit">Save</button>
@@ -62,7 +89,7 @@
           <button id="exportBackup" type="button">Export JSON</button>
           <label class="checkbox">
             <input id="includeApiKeyInBackup" type="checkbox">
-            <span>Include API Key in exported JSON</span>
+            <span>Include API Keys in exported JSON</span>
           </label>
           <label class="file-button">
             Import JSON
@@ -73,7 +100,7 @@
             <span>Replace existing data</span>
           </label>
         </div>
-        <p class="warning-text">API Key 默认不会导出。只有勾选上方选项时，导出的 JSON 才会包含 API Key。</p>
+        <p class="warning-text">API Keys 默认不会导出。只有勾选上方选项时，导出的 JSON 才会包含聊天和 TTS API Key。</p>
       </section>
       <section class="shortcut-panel">
         <h2>Shortcuts</h2>

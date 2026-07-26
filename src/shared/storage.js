@@ -87,7 +87,7 @@ export async function exportBackup(options = {}) {
 }
 
 export async function importBackup(payload, mode = "merge") {
-  const current = await exportBackup();
+  const current = await exportBackup({ includeApiKey: true });
   const next = mergeBackupPayload(current, payload, mode);
   await chrome.storage.local.set({
     settings: next.settings,

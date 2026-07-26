@@ -29,6 +29,20 @@ form {
   gap: 16px;
 }
 
+fieldset {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid #d8dee4;
+  border-radius: 8px;
+}
+
+legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
 label {
   display: grid;
   gap: 6px;

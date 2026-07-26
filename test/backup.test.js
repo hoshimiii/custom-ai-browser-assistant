@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { BACKUP_VERSION, createBackupPayload, mergeBackupPayload, parseBackupPayload } from "../src/shared/backup.js";
+import { importBackup } from "../src/shared/storage.js";
 
 test("createBackupPayload includes version and app marker", () => {
   const payload = createBackupPayload({ settings: { model: "m", apiKey: "secret" }, history: [], savedPages: [] }, "now");
@@ -10,9 +11,13 @@ test("createBackupPayload includes version and app marker", () => {
   assert.equal(payload.settings.apiKey, "");
 });
 
-test("createBackupPayload can explicitly include api key", () => {
-  const payload = createBackupPayload({ settings: { apiKey: "secret" } }, "now", { includeApiKey: true });
+test("createBackupPayload redacts both keys unless explicitly included", () => {
+  const redacted = createBackupPayload({ settings: { apiKey: "secret", ttsApiKey: "tts-secret" } }, "now");
+  assert.equal(redacted.settings.apiKey, "");
+  assert.equal(redacted.settings.ttsApiKey, "");
+  const payload = createBackupPayload({ settings: { apiKey: "secret", ttsApiKey: "tts-secret" } }, "now", { includeApiKey: true });
   assert.equal(payload.settings.apiKey, "secret");
+  assert.equal(payload.settings.ttsApiKey, "tts-secret");
 });
 
 test("parseBackupPayload rejects wrong app marker", () => {
@@ -44,10 +49,40 @@ test("mergeBackupPayload replace mode returns backup data", () => {
   assert.deepEqual(merged.history, [{ id: "b" }]);
 });
 
-test("mergeBackupPayload preserves current api key when backup omits it", () => {
-  const current = createBackupPayload({ settings: { apiKey: "current-key" } }, "old", { includeApiKey: true });
-  const backup = createBackupPayload({ settings: { model: "new-model", apiKey: "backup-key" } }, "new");
+test("mergeBackupPayload preserves current keys when backup omits them", () => {
+  const current = createBackupPayload({ settings: { apiKey: "current-key", ttsApiKey: "current-tts-key" } }, "old", { includeApiKey: true });
+  const backup = createBackupPayload({ settings: { model: "new-model", apiKey: "backup-key", ttsApiKey: "backup-tts-key" } }, "new");
   const merged = mergeBackupPayload(current, backup, "merge");
   assert.equal(merged.settings.model, "new-model");
   assert.equal(merged.settings.apiKey, "current-key");
+  assert.equal(merged.settings.ttsApiKey, "current-tts-key");
+});
+
+test("importBackup merge preserves existing redacted keys", async () => {
+  const storage = {
+    settings: { apiKey: "current-key", ttsApiKey: "current-tts-key" },
+    history: [],
+    savedPages: [],
+    floatingSessions: []
+  };
+  const previousChrome = globalThis.chrome;
+  globalThis.chrome = {
+    storage: {
+      local: {
+        async get(key) {
+          return { [key]: storage[key] };
+        },
+        async set(next) {
+          Object.assign(storage, next);
+        }
+      }
+    }
+  };
+  try {
+    await importBackup(createBackupPayload({ settings: { model: "new-model" } }, "now"));
+    assert.equal(storage.settings.apiKey, "current-key");
+    assert.equal(storage.settings.ttsApiKey, "current-tts-key");
+  } finally {
+    globalThis.chrome = previousChrome;
+  }
 });

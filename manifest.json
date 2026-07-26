@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Custom AI Browser Assistant",
   "short_name": "AI Assistant",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "BYOK AI assistant for chat, page summaries, selected text, search, and writing help.",
   "icons": {
     "16": "assets/icon-16.png",

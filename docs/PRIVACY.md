@@ -21,19 +21,20 @@ Depending on the user action, the request may include:
 - PDF page metadata and any extractable visible text.
 - Screenshot image data when the user clicks screenshot Q&A.
 - Saved-page library snapshots when the user asks questions against saved content.
+- Current page or selected-region text when the user explicitly starts TTS playback.
 
-No page content is sent automatically on page load. User action is required. When the user sends a side panel or floating-chat question on a readable webpage, the extension includes the current page, selected-region, selected-text, or screenshot context for that action.
+No page content is sent automatically on page load. User action is required. When the user sends a side panel or floating-chat question on a readable webpage, the extension includes the current page, selected-region, selected-text, or screenshot context for that action. TTS text is sent only when the user clicks the read control, and only to the configured TTS endpoint.
 
 ## Local Storage
 
 The extension stores the following data in `chrome.storage.local`:
 
-- API settings, including Base URL, API Key, model name, system prompt, and preferences.
+- API settings, including chat/TTS Base URLs, API keys, models, system prompt, and preferences.
 - Recent conversation history, if enabled.
 - Saved-page library snapshots.
 - In-page floating chat sessions, grouped by webpage URL. These store source metadata, text excerpts, chat messages, and compressed memory summaries. Screenshot image data is used for the model request but is not stored in floating session memory.
 
-Users can export or import this data from the options page. Backups do not include the API key by default; exporting the API key requires explicitly enabling the API-key checkbox. Users can also clear stored conversation history and delete saved pages from the side panel.
+Users can export or import this data from the options page. Backups do not include chat or TTS API keys by default; exporting either key requires the explicit API-key opt-in. Generated TTS audio and its source text are ephemeral: they are not stored in conversation history or backups. Users can also clear stored conversation history and delete saved pages from the side panel.
 
 ## Permissions
 
@@ -47,7 +48,7 @@ Users can export or import this data from the options page. Backups do not inclu
 
 ## API Keys
 
-API keys are stored locally in Chrome extension storage. They are included only in requests sent to the configured API Base URL.
+API keys are stored locally in Chrome extension storage. Chat and TTS keys are included only in requests sent to their configured endpoints.
 
 Do not configure an API endpoint you do not trust. If the endpoint is remote, page content and prompts sent through the extension may be processed by that remote service.
 

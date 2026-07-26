@@ -14,6 +14,7 @@ This project aims to cover the most common Monica-like browser assistant workflo
 | Ask current page | Implemented | Uses page title, URL, and extracted text as context. |
 | Page translation/rewrite | Implemented | In-page translation identifies readable text blocks, underlines source text, and inserts translations below the original DOM nodes. |
 | Page region picker | Implemented | Side panel can start an element picker; the chosen DOM area becomes the active page context. |
+| Text to speech | Implemented | Reads current-page or selected-region text through a configurable OpenAI-compatible `/audio/speech` endpoint; audio is generated and played sequentially without entering chat history. |
 | Selected text actions | Implemented | Explain, translate, summarize, rewrite via floating toolbar and context menus. |
 | Search assistant | Implemented | Injects an ask button on Google/Bing search pages. |
 | Writing assistant | Implemented | Polishes focused editable fields and writes result back. |
@@ -36,6 +37,7 @@ The extension is split into browser-facing modules and pure shared modules:
 - `src/content/contentScript.js`: page extraction, selected-text toolbar, search panel, editable-field operations, region picking, in-page translation DOM updates, and floating chat UI.
 - `src/sidepanel/*`: chat UI and page/selection/search/writing workflows.
 - `src/options/*`: BYOK configuration.
+- `src/shared/tts.js`: OpenAI-compatible speech request validation and conservative text chunking.
 - `src/shared/*`: API client, prompts, text processing, storage helpers.
 - `test/*`: Node tests for pure logic.
 

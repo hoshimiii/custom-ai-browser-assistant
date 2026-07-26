@@ -31,8 +31,10 @@ export function mergeBackupPayload(current, backup, mode = "merge") {
     return parsed;
   }
   const mergedSettings = { ...(current.settings || {}), ...parsed.settings };
-  if (!parsed.settings?.apiKey && current.settings?.apiKey) {
-    mergedSettings.apiKey = current.settings.apiKey;
+  for (const key of ["apiKey", "ttsApiKey"]) {
+    if (!parsed.settings?.[key] && current.settings?.[key]) {
+      mergedSettings[key] = current.settings[key];
+    }
   }
   return createBackupPayload({
     settings: mergedSettings,
@@ -46,7 +48,8 @@ function normalizeSettingsForBackup(settings, options = {}) {
   return {
     ...DEFAULT_SETTINGS,
     ...settings,
-    apiKey: options.includeApiKey ? settings.apiKey || "" : ""
+    apiKey: options.includeApiKey ? settings.apiKey || "" : "",
+    ttsApiKey: options.includeApiKey ? settings.ttsApiKey || "" : ""
   };
 }
 

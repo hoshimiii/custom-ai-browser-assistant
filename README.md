@@ -10,6 +10,7 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - In-page floating chat windows for selected text, current page, or visible-tab screenshots.
 - Multiple isolated floating chat sessions per webpage with local memory and idle compression.
 - Configurable OpenAI-compatible `Base URL`, `API Key`, and `Model`.
+- Configurable OpenAI-compatible TTS endpoint, API key, model, voice, speed, and timeout; current-page or selected-region text can be read aloud in chunks.
 - Current page summarization and question answering.
 - Action center for page analysis and writing tasks.
 - Monica-style in-page translation that underlines original text and inserts translated text below it.
@@ -78,6 +79,12 @@ The API must support the OpenAI-compatible chat completions endpoint:
 
 ```http
 POST /chat/completions
+```
+
+For page reading, configure TTS in the options page. It uses the OpenAI-compatible endpoint below; blank TTS URL and key inherit the chat URL and key. Select a page region first when only part of a page should be read.
+
+```http
+POST /audio/speech
 ```
 
 ## Development
