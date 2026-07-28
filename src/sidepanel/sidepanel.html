@@ -21,12 +21,6 @@
 
     <div class="workspace">
       <section class="context-panel" aria-label="Current context">
-          <div class="context-card">
-            <div class="context-status">
-              <strong id="contextMode">上下文：读取中</strong>
-              <span id="contextDetail"></span>
-            </div>
-          </div>
           <div class="primary-actions" aria-label="主要操作">
             <button id="summarizePage" class="primary-action" type="button">总结</button>
             <button id="readPage" class="primary-action" type="button">朗读</button>
@@ -110,7 +104,10 @@
     </div>
 
     <form id="composer" class="composer">
-      <textarea id="promptInput" rows="3" placeholder="询问当前网页、选中区域或截图"></textarea>
+      <div id="contextTagRow" class="context-tag-row" hidden>
+        <button id="contextTag" class="context-tag" type="button" aria-pressed="false"></button>
+      </div>
+      <textarea id="promptInput" rows="3" placeholder="输入问题，网页内容可按需附加"></textarea>
       <div class="composer-actions">
         <button id="clearChat" type="button">清空</button>
         <button id="stopChat" type="button" disabled>停止</button>

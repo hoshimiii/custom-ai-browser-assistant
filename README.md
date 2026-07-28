@@ -6,7 +6,8 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 
 ## Features
 
-- Side panel chat with streaming responses and default current-page context.
+- Side panel chat with streaming responses; attach readable current-page or selected-region context only when needed.
+- Safe Markdown answers in the side panel, including one-click copying for fenced code blocks.
 - In-page floating chat windows for selected text, current page, or visible-tab screenshots.
 - Multiple isolated floating chat sessions per webpage with local memory and idle compression.
 - Multiple configurable local model instances, each with a name, provider preset, OpenAI-compatible `Base URL`, `API Key`, model, and explicit vision capability; options supports add, edit, duplicate-as-new, delete, and a default instance.

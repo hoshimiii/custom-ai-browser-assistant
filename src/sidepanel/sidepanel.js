@@ -10,6 +10,7 @@ import { buildInlineTranslationPrompt, parseInlineTranslationResponse } from "..
 import { buildImageQuestionMessage } from "../shared/vision.js";
 import { requestSpeech, splitTtsText } from "../shared/tts.js";
 import { resolveModelInstance } from "../shared/modelInstances.js";
+import { renderMarkdown } from "../shared/markdown.js";
 
 const state = {
   settings: DEFAULT_SETTINGS,
@@ -21,6 +22,7 @@ const state = {
   selectedRegionPage: null,
   regionEventToken: 0,
   contextRevision: 0,
+  contextOptIn: false,
   conversationId: null,
   conversationCreatedAt: null,
   pendingScreenshot: null,
@@ -40,6 +42,8 @@ const elements = {
   template: document.getElementById("messageTemplate"),
   composer: document.getElementById("composer"),
   promptInput: document.getElementById("promptInput"),
+  contextTagRow: document.getElementById("contextTagRow"),
+  contextTag: document.getElementById("contextTag"),
   openOptions: document.getElementById("openOptions"),
   pageActions: document.getElementById("pageActions"),
   writingActions: document.getElementById("writingActions"),
@@ -48,8 +52,6 @@ const elements = {
   readPage: document.getElementById("readPage"),
   selectRegion: document.getElementById("selectRegion"),
   clearRegion: document.getElementById("clearRegion"),
-  contextMode: document.getElementById("contextMode"),
-  contextDetail: document.getElementById("contextDetail"),
   refreshContext: document.getElementById("refreshContext"),
   hideTranslations: document.getElementById("hideTranslations"),
   showTranslations: document.getElementById("showTranslations"),
@@ -87,7 +89,7 @@ async function init() {
   await renderLibrary();
   await refreshContextStatus();
   await consumePendingAction();
-  addMessage("assistant", "配置 API 后即可开始使用。直接输入问题会默认读取当前网页；也可以选择页面区域、截图问答或网页内翻译。");
+  addMessage("assistant", "配置 API 后即可开始使用。直接输入问题即可聊天；需要网页内容时，点选输入框上方的页面标签。");
 }
 
 function wireEvents() {
@@ -111,6 +113,11 @@ function wireEvents() {
       return;
     }
     await sendUserPrompt(text);
+  });
+  elements.contextTag.addEventListener("click", () => {
+    if (state.running || !isReadableContext()) return;
+    state.contextOptIn = !state.contextOptIn;
+    updateContextLabel();
   });
   elements.summarizePage.addEventListener("click", () => runPageAction("summary"));
   elements.readPage.addEventListener("click", readCurrentPage);
@@ -214,6 +221,7 @@ async function handleRegionSelected(message, sender) {
   state.currentTabId = sender.tab.id;
   state.contextIdentity = page.identity;
   state.context = pageContextFromPage(page);
+  state.contextOptIn = false;
   updateContextLabel();
   if (samePage && !sameRegion) addMessage("assistant", "选中区域已更换，已开始新会话。");
   addMessage("assistant", `已选择页面区域：${state.context.label}`);
@@ -228,6 +236,7 @@ async function handleRegionCleared(sender) {
     restartForContextChange();
     state.selectedRegionPage = null;
   }
+  state.contextOptIn = false;
   await refreshContextStatus();
 }
 
@@ -248,9 +257,15 @@ function restartForContextChange() {
 
 async function sendUserPrompt(text) {
   if (!ensureIdle()) return;
+  if (!state.contextOptIn) {
+    addMessage("user", text);
+    await askModel([{ role: "user", content: text }]);
+    return;
+  }
+  const selectedMode = state.context?.mode;
   const prepared = await preparePageForOperation("page-question", { silent: true });
   if (prepared?.cancelled) return;
-  if (prepared?.page?.text?.trim()) {
+  if (prepared?.page?.text?.trim() && (selectedMode !== "selected-region" || prepared.page.scope === "selected-region")) {
     addMessage("user", `基于${formatPageScope(prepared.page)}提问：${text}`);
     try {
       await askModelDuringTask([{ role: "user", content: buildPageQuestionPrompt(prepared.page, text) }], prepared.signal, prepared.settings);
@@ -259,11 +274,10 @@ async function sendUserPrompt(text) {
     }
     return;
   }
-  if (state.context?.mode === "selected-region") {
-    addMessage("error", "选中区域暂时无法读取。请重新选择该区域后重试；不会改为普通聊天。");
-    return;
-  }
-  addMessage("error", "未能读取当前网页内容。请刷新页面后重试。");
+  state.contextOptIn = false;
+  updateContextLabel();
+  addMessage("user", text);
+  await askModel([{ role: "user", content: text }]);
 }
 
 async function runPageAction(actionId) {
@@ -530,6 +544,7 @@ async function askModelDuringTask(newMessages, signal, settings = currentRequest
       assistantNode.querySelector(".content").textContent = fullText;
     }
     if (!fullText.trim()) throw new Error("模型返回了空内容，请检查模型兼容性，或关闭流式输出后重试。");
+    renderMarkdown(assistantNode.querySelector(".content"), fullText);
     state.messages.push(...newMessages.map(sanitizeMessageForHistory), { role: "assistant", content: fullText });
     trimMessages();
     await persist();
@@ -650,7 +665,7 @@ async function preparePageForOperation(operation, options = {}) {
       addMessage("assistant", "页面读取已停止。");
       return { page: null, cancelled: true };
     }
-    addMessage("error", `页面准备失败：${error.message}`);
+    if (!options.silent) addMessage("error", `页面准备失败：${error.message}`);
     return { page: null, cancelled: false };
   } finally {
     if (!keepTask) endTask();
@@ -687,6 +702,7 @@ async function refreshContextStatus() {
 
 function updateUnavailableContext(label) {
   state.context = { mode: "unavailable", label, chars: 0 };
+  state.contextOptIn = false;
   updateContextLabel();
 }
 
@@ -695,6 +711,7 @@ function syncConversationContext(tab, url = tab?.url) {
   if (!nextIdentity) return;
   if (state.contextIdentity && state.contextIdentity !== nextIdentity) {
     state.selectedRegionPage = null;
+    state.contextOptIn = false;
     restartForContextChange();
     clearPendingScreenshot();
     addMessage("assistant", "页面已切换，已开始新会话，避免混用上一页内容。");
@@ -710,22 +727,17 @@ function resetConversation() {
 }
 
 function updateContextLabel() {
-  const context = state.context || { mode: "unknown", label: "未读取", chars: 0 };
-  const modeLabels = {
-    page: "上下文：当前网页",
-    "selected-region": "上下文：选中区域",
-    unavailable: "上下文：未读取网页",
-    unknown: "上下文：未读取"
-  };
-  elements.contextMode.textContent = modeLabels[context.mode] || "上下文：当前网页";
-  const detail = [
-    context.label,
-    context.pageType ? `类型：${context.pageType}` : "",
-    context.chars ? `${context.chars} 字符` : "",
-    context.title ? context.title : ""
-  ].filter(Boolean).join(" · ");
-  elements.contextDetail.textContent = detail;
+  const context = state.context || { mode: "unknown", label: "", chars: 0 };
+  const readable = isReadableContext();
+  if (!readable) state.contextOptIn = false;
+  elements.contextTagRow.hidden = !readable;
+  elements.contextTag.setAttribute("aria-pressed", String(state.contextOptIn));
+  elements.contextTag.textContent = `${state.contextOptIn ? "已附加" : "附加"}${context.mode === "selected-region" ? "选中区域" : "当前网页"}${context.title ? `：${context.title}` : ""}`;
   elements.clearRegion.disabled = state.running || context.mode !== "selected-region";
+}
+
+function isReadableContext() {
+  return Boolean(state.context?.chars && ["page", "selected-region"].includes(state.context.mode));
 }
 
 async function startElementPick() {
@@ -736,6 +748,7 @@ async function startElementPick() {
 }
 
 async function clearSelectedRegion() {
+  state.contextOptIn = false;
   await sendActiveTabMessage({ type: "CLEAR_SELECTED_REGION" });
   await refreshContextStatus();
   addMessage("assistant", "已取消选中区域，后续将使用当前网页上下文。");
@@ -805,7 +818,10 @@ function addMessage(role, content) {
   const node = elements.template.content.firstElementChild.cloneNode(true);
   node.classList.add(role);
   node.querySelector(".role").textContent = role.toUpperCase();
-  node.querySelector(".content").textContent = formatMessageContent(content);
+  const contentNode = node.querySelector(".content");
+  const text = formatMessageContent(content);
+  if (role === "assistant") renderMarkdown(contentNode, text);
+  else contentNode.textContent = text;
   elements.messages.appendChild(node);
   scrollToBottom();
   return node;
