@@ -2,13 +2,13 @@
 
 ## Current Brief
 
-This turn's only goal: fast-forward the independently accepted `0.3.8` branch into local `master` and retain the verified local ZIP release.
+This turn's only goal: retain the completed local `0.3.8` release evidence and its one bounded browser-runtime follow-up.
 
 ### Deliverables
 
 - Retain the independent Terra usability/packaging report for commit `097ffab` on `codex/decoupled-page-context`.
 - Retain fresh root verification and the packaged `0.3.8` ZIP evidence.
-- Fast-forward local `master` only after all material checks pass, then rebuild `releases/custom-ai-browser-assistant.zip` from `master`.
+- Local `master` fast-forwarded from `cd89b3e` to `eb47ac8`, then rebuilt `releases/custom-ai-browser-assistant.zip` from `master`.
 
 ### Non-goals
 
@@ -31,19 +31,19 @@ This turn's only goal: fast-forward the independently accepted `0.3.8` branch in
 - Independent Terra report: `PASS_WITH_BROWSER_BLOCKER`; no P0-P3 findings, 4 focused tests and the 127-test package suite passed, and packaged source hashes matched the worktree.
 - `node --test test/markdown.test.js test/prompts.test.js`
 - `npm run verify`, `git diff --check`, and ZIP manifest inspection before and after the local merge.
-- `git merge --ff-only codex/decoupled-page-context` while on local `master`.
+- `git merge --ff-only codex/decoupled-page-context` completed while on local `master`.
 
 ### Verification and Remaining Risk
 
-- Root evidence before merge: focused tests 4/4, `npm run verify` 127/127 plus lint/import/build/package/release audit, and `git diff --check` passed; the rebuilt ZIP reports version `0.3.8`.
+- Root evidence before and after merge: focused tests 4/4, `npm run verify` 127/127 plus lint/import/build/package/release audit, and `git diff --check` passed; the rebuilt ZIP is version `0.3.8`, 67,685 bytes, and includes all required side-panel and Markdown sources.
 - The independent test could discover the installed extension settings tab, but the Chrome control policy blocked opening `chrome-extension://` pages. Browser side-panel and clipboard runtime remain unverified; no credentials or provider requests were used.
 
 ### Stop Conditions
 
-- Stop before merge if Git refs diverge or the worktree gains tracked user changes; the independent report and root checks found no material defect.
+- Stop before any future external publication or remote push; neither was part of this release.
 - Stop before external publication or remote push; neither is authorized.
 - Preserve `.playwright-cli/`, `.playwright-mcp/`, `outputs/`, `work/`, and the existing preview PNG files.
 
 ## Pending List
 
-- Perform the local fast-forward, rerun the release verification from `master`, and retain the Chrome runtime blocker as a manual follow-up.
+- Browser side-panel rendering and Clipboard API behavior still need one user-operated unpacked-extension reload because policy blocked `chrome-extension://` inspection; do not treat that runtime slice as passed.
