@@ -1,6 +1,17 @@
 import { DEFAULT_SETTINGS } from "./defaults.js";
 
 const LEGACY_FIELDS = ["providerPreset", "baseUrl", "apiKey", "model"];
+const REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+
+export function normalizeReasoningEffort(value) {
+  const effort = String(value || "").trim().toLowerCase();
+  return REASONING_EFFORTS.has(effort) ? effort : "";
+}
+
+export function isGptReasoningModel(model) {
+  const segment = String(model || "").trim().split("/").at(-1) || "";
+  return /^gpt-5(?:$|[.-])/i.test(segment) && !/(?:^|[.-])(audio|image)(?:$|[.-])/i.test(segment);
+}
 
 export function normalizeModelSettings(settings = {}) {
   const raw = settings && typeof settings === "object" ? settings : {};
@@ -67,6 +78,7 @@ function legacyInstance(raw) {
     baseUrl: String(raw.baseUrl || ""),
     apiKey: String(raw.apiKey || ""),
     model: String(raw.model || ""),
+    reasoningEffort: normalizeReasoningEffort(raw.reasoningEffort),
     supportsVision: true
   };
 }
@@ -81,12 +93,13 @@ function normalizeInstance(instance, index) {
     baseUrl: String(instance.baseUrl || ""),
     apiKey: String(instance.apiKey || ""),
     model: String(instance.model || ""),
+    reasoningEffort: normalizeReasoningEffort(instance.reasoningEffort),
     supportsVision: Boolean(instance.supportsVision)
   };
 }
 
 function blankInstance(id = "model-default") {
-  return { id, name: "默认模型", providerPreset: "custom", baseUrl: "", apiKey: "", model: "", supportsVision: false };
+  return { id, name: "默认模型", providerPreset: "custom", baseUrl: "", apiKey: "", model: "", reasoningEffort: "", supportsVision: false };
 }
 
 function flatInstance(instance) {
@@ -95,6 +108,7 @@ function flatInstance(instance) {
     baseUrl: instance.baseUrl,
     apiKey: instance.apiKey,
     model: instance.model,
+    reasoningEffort: isGptReasoningModel(instance.model) ? instance.reasoningEffort : "",
     supportsVision: instance.supportsVision
   };
 }

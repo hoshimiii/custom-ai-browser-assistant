@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createModelInstance, duplicateModelInstance, normalizeModelSettings, removeModelInstance, resolveModelInstance } from "../src/shared/modelInstances.js";
+import { createModelInstance, duplicateModelInstance, isGptReasoningModel, normalizeModelSettings, normalizeReasoningEffort, removeModelInstance, resolveModelInstance } from "../src/shared/modelInstances.js";
 
 test("normalizes legacy settings into a stable vision-capable default instance", () => {
   const legacy = { providerPreset: "openai", baseUrl: "https://api.example", apiKey: "key", model: "vision" };
@@ -34,4 +34,28 @@ test("creates blank non-vision instances, duplicates with a new ID, and refuses 
   assert.deepEqual(duplicated.modelInstances[1], { ...initial.modelInstances[0], id: "copy", name: "One（副本）" });
   assert.deepEqual(removeModelInstance(initial, "one"), initial);
   assert.equal(removeModelInstance(duplicated, "one").defaultModelInstanceId, "copy");
+});
+
+test("normalizes, duplicates, and resolves per-instance GPT reasoning effort", () => {
+  const settings = normalizeModelSettings({ modelInstances: [
+    { id: "gpt", name: "GPT", model: "openai/GPT-5", reasoningEffort: "HIGH" },
+    { id: "other", name: "Other", model: "other/model", reasoningEffort: "invalid" }
+  ], defaultModelInstanceId: "gpt" });
+  assert.equal(settings.modelInstances[0].reasoningEffort, "high");
+  assert.equal(settings.modelInstances[1].reasoningEffort, "");
+  assert.equal(resolveModelInstance(settings, "gpt").reasoningEffort, "high");
+  assert.equal(resolveModelInstance({ modelInstances: [{ id: "other", model: "other/model", reasoningEffort: "high" }], defaultModelInstanceId: "other" }).reasoningEffort, "");
+  assert.equal(duplicateModelInstance(settings, "gpt", () => "copy").modelInstances[2].reasoningEffort, "high");
+  assert.equal(normalizeReasoningEffort("xhigh"), "xhigh");
+  assert.equal(normalizeReasoningEffort("none"), "none");
+  assert.equal(normalizeReasoningEffort("minimal"), "minimal");
+  assert.equal(normalizeReasoningEffort("invalid"), "");
+  assert.equal(isGptReasoningModel("openai/gPt-5.4"), true);
+  assert.equal(isGptReasoningModel("gpt-4o"), false);
+  assert.equal(isGptReasoningModel("gpt-audio"), false);
+  assert.equal(isGptReasoningModel("gpt-image"), false);
+  assert.equal(isGptReasoningModel("gpt-5-audio"), false);
+  assert.equal(isGptReasoningModel("openai/gpt-5-image"), false);
+  assert.equal(isGptReasoningModel("gpt-5-mini"), true);
+  assert.equal(isGptReasoningModel("gpt-5/other"), false);
 });

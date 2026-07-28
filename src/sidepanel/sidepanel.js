@@ -3,10 +3,9 @@ import { findPageAction, PAGE_ACTIONS, WRITING_ACTIONS } from "../shared/actions
 import { buildChunkSummaryPrompts, buildFinalSummaryPrompt, splitTextIntoChunks } from "../shared/chunking.js";
 import { DEFAULT_SETTINGS, MESSAGE_LIMIT } from "../shared/defaults.js";
 import { buildSavedPageQuestionPrompt, searchSavedPages } from "../shared/library.js";
-import { buildPagePlannerMessages, parsePagePlannerResponse } from "../shared/pageRecipes.js";
 import { buildPageIdentity, createSelectedRegionPageSnapshot, resolveSelectedRegionPageSnapshot } from "../shared/pageTypes.js";
 import { buildPageQuestionPrompt, buildPageSummaryPrompt, buildSearchPrompt, buildSelectionPrompt, buildWritingPrompt } from "../shared/prompts.js";
-import { clearHistory, deletePageRecipe, deleteSavedPage, findStoredPageRecipe, getHistory, getSavedPages, getSettings, saveConversation, savePageRecipe, savePageSnapshot } from "../shared/storage.js";
+import { clearHistory, deleteSavedPage, getHistory, getSavedPages, getSettings, saveConversation, savePageSnapshot } from "../shared/storage.js";
 import { buildInlineTranslationPrompt, parseInlineTranslationResponse } from "../shared/translation.js";
 import { buildImageQuestionMessage } from "../shared/vision.js";
 import { requestSpeech, splitTtsText } from "../shared/tts.js";
@@ -264,9 +263,7 @@ async function sendUserPrompt(text) {
     addMessage("error", "选中区域暂时无法读取。请重新选择该区域后重试；不会改为普通聊天。");
     return;
   }
-  addMessage("error", "未能读取当前网页内容，本次将按普通聊天发送。可刷新网页或使用“选择区域”后重试。");
-  addMessage("user", text);
-  await askModel([{ role: "user", content: text }]);
+  addMessage("error", "未能读取当前网页内容。请刷新页面后重试。");
 }
 
 async function runPageAction(actionId) {
@@ -428,7 +425,7 @@ async function runInlinePageTranslation() {
   const prepared = await preparePageForOperation("translate-page");
   if (!prepared?.page) return;
   try {
-    const response = await sendPinnedTabMessage(prepared.target, { type: "GET_TRANSLATABLE_BLOCKS", limit: 48, recipeSelectors: prepared.selectors });
+    const response = await sendPinnedTabMessage(prepared.target, { type: "GET_TRANSLATABLE_BLOCKS", limit: 48 });
     if (prepared.page.scope === "selected-region" && response?.context?.mode !== "selected-region") {
       throw new Error("选区已失效，请重新选择");
     }
@@ -586,12 +583,12 @@ async function extractCurrentPage(options = {}) {
   }
   syncConversationContext(tab);
   state.currentTabId = tab.id;
-  const response = await chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_PAGE", recipeSelectors: options.recipeSelectors }, { frameId: 0 }).catch(() => null);
-  if (!response?.ok || !response.page || (!response.page.text && !options.allowEmpty)) {
+  const response = await chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_PAGE" }, { frameId: 0 }).catch(() => null);
+  if (!response?.ok || !response.page || !response.page.text) {
     const activeTab = await getActiveTab();
     const selectedPage = resolveSelectedRegionPageSnapshot(state.selectedRegionPage, activeTab);
     if (selectedPage) return applyPageContext(selectedPage, activeTab);
-    if (!options.silent) addMessage("error", "无法读取当前页面。请刷新页面、换到普通网页，或使用“选择区域”后重试。");
+    if (!options.silent) addMessage("error", "无法读取当前页面。请刷新页面后重试。");
     updateUnavailableContext("无法读取当前页面");
     return null;
   }
@@ -604,7 +601,6 @@ async function extractCurrentPage(options = {}) {
   if (response.page.scope !== "selected-region" && selectedPage) {
     return applyPageContext(selectedPage, activeTab);
   }
-  if (options.recipeSelectors && !response.page.recipe?.valid) return response.page;
   if (response.page.scope === "selected-region") {
     state.selectedRegionPage = createSelectedRegionPageSnapshot(
       { ...activeTab, url: response.page.url, title: activeTab?.title },
@@ -646,19 +642,12 @@ async function preparePageForOperation(operation, options = {}) {
     const genericPage = await extractCurrentPage({ silent: options.silent });
     if (!genericPage) return { page: null, cancelled: abortController.signal.aborted };
     if (abortController.signal.aborted) return { page: null, cancelled: true };
-    if (genericPage.scope === "selected-region") {
-      const target = operation === "translate-page" ? await createPageTarget(genericPage) : null;
-      keepTask = true;
-      return { page: genericPage, selectors: [], settings, signal: abortController.signal, target };
-    }
-    const planned = await resolvePageRecipe(genericPage, operation, settings, abortController.signal);
-    if (abortController.signal.aborted) return { page: null, cancelled: true };
-    if (operation === "translate-page") planned.target = await createPageTarget(planned.page);
+    const target = operation === "translate-page" ? await createPageTarget(genericPage) : null;
     keepTask = true;
-    return planned;
+    return { page: genericPage, settings, signal: abortController.signal, target };
   } catch (error) {
     if (abortController.signal.aborted) {
-      addMessage("assistant", "页面规划已停止。");
+      addMessage("assistant", "页面读取已停止。");
       return { page: null, cancelled: true };
     }
     addMessage("error", `页面准备失败：${error.message}`);
@@ -666,58 +655,6 @@ async function preparePageForOperation(operation, options = {}) {
   } finally {
     if (!keepTask) endTask();
   }
-}
-
-async function resolvePageRecipe(genericPage, operation, settings, signal) {
-  const stored = await findStoredPageRecipe(genericPage.url, genericPage.type, operation);
-  if (stored) {
-    const storedPage = await extractCurrentPage({ silent: true, allowEmpty: true, recipeSelectors: stored.selectors });
-    if (signal.aborted) throw new DOMException("已停止", "AbortError");
-    if (storedPage?.recipe?.valid && storedPage.text) {
-      return { page: storedPage, selectors: storedPage.recipe.matchedSelectors, settings, signal };
-    }
-    if (storedPage) await deletePageRecipe(stored.id);
-  }
-
-  const candidateResponse = await sendActiveTabMessage({ type: "GET_PAGE_CANDIDATES" });
-  if (!candidateResponse?.ok || !Array.isArray(candidateResponse.candidates) || !candidateResponse.candidates.length) {
-    return { page: genericPage, selectors: [], settings, signal };
-  }
-  const activeTab = await getActiveTab();
-  if (buildPageIdentity(activeTab?.id, activeTab?.url) !== buildPageIdentity(state.currentTabId, candidateResponse.page?.url)) {
-    throw new Error("页面已切换");
-  }
-
-  const status = addMessage("assistant", "正在确定页面正文区域…");
-  let candidateIds;
-  try {
-    const response = await requestChat(settings, buildPagePlannerMessages(genericPage, operation, candidateResponse.candidates), { signal });
-    candidateIds = parsePagePlannerResponse(response, candidateResponse.candidates);
-  } catch (error) {
-    if (signal.aborted) throw error;
-    addMessage("assistant", "页面规划不可用，已使用通用网页内容。");
-    return { page: genericPage, selectors: [], settings, signal };
-  } finally {
-    status.remove();
-  }
-  const selectorById = new Map(candidateResponse.candidates.map((candidate) => [candidate.id, candidate.selector]));
-  const selectors = candidateIds.map((id) => selectorById.get(id)).filter(Boolean);
-  if (!selectors.length) {
-    addMessage("assistant", "页面规划结果无效，已使用通用网页内容。");
-    return { page: genericPage, selectors: [], settings, signal };
-  }
-  const plannedPage = await extractCurrentPage({ silent: true, allowEmpty: true, recipeSelectors: selectors });
-  if (!plannedPage?.recipe?.valid || !plannedPage.text) {
-    addMessage("assistant", "页面结构已变化，已使用通用网页内容。");
-    return { page: genericPage, selectors: [], settings, signal };
-  }
-  const saved = await savePageRecipe({
-    origin: genericPage.url,
-    pageType: genericPage.type,
-    operation,
-    selectors: plannedPage.recipe.matchedSelectors
-  });
-  return { page: plannedPage, selectors: saved?.selectors || plannedPage.recipe.matchedSelectors, settings, signal };
 }
 
 async function refreshContextStatus() {

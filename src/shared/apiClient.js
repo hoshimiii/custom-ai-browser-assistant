@@ -1,3 +1,5 @@
+import { isGptReasoningModel, normalizeReasoningEffort } from "./modelInstances.js";
+
 export class ApiError extends Error {
   constructor(message, details = {}) {
     super(message);
@@ -52,11 +54,14 @@ export function validateBaseUrlPolicy(baseUrl) {
 
 export function buildChatRequest(settings, messages, overrides = {}) {
   validateSettings(settings);
+  const model = overrides.model || settings.model;
+  const reasoningEffort = normalizeReasoningEffort(settings.reasoningEffort);
   return {
-    model: overrides.model || settings.model,
+    model,
     stream: overrides.stream ?? settings.stream ?? true,
     temperature: overrides.temperature ?? 0.3,
-    messages
+    messages,
+    ...(isGptReasoningModel(model) && reasoningEffort ? { reasoning_effort: reasoningEffort } : {})
   };
 }
 
@@ -80,7 +85,7 @@ export async function requestChat(settings, messages, overrides = {}) {
         payload
       });
     }
-    return requireUsableText(readMessageContent(payload?.choices?.[0]?.message?.content));
+    return requireUsableText(readResponseText(payload));
   } finally {
     request.cleanup();
   }
@@ -111,7 +116,7 @@ export async function streamChat(settings, messages, callbacks = {}, overrides =
 
     if (!response.body) {
       const payload = await response.json();
-      const text = requireUsableText(readMessageContent(payload?.choices?.[0]?.message?.content));
+      const text = requireUsableText(readResponseText(payload));
       callbacks.onToken?.(text);
       callbacks.onDone?.(text);
       return { abort: request.abort };
@@ -120,12 +125,15 @@ export async function streamChat(settings, messages, callbacks = {}, overrides =
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let rawBody = "";
     let fullText = "";
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      const chunk = decoder.decode(value, { stream: true });
+      buffer += chunk;
+      rawBody += chunk;
       const parsed = consumeSseBuffer(buffer);
       buffer = parsed.remainder;
       for (const event of parsed.events) {
@@ -141,7 +149,9 @@ export async function streamChat(settings, messages, callbacks = {}, overrides =
         }
       }
     }
-    buffer += decoder.decode();
+    const finalChunk = decoder.decode();
+    buffer += finalChunk;
+    rawBody += finalChunk;
     const parsed = consumeSseBuffer(buffer, true);
     for (const event of parsed.events) {
       if (event === "[DONE]") break;
@@ -149,6 +159,13 @@ export async function streamChat(settings, messages, callbacks = {}, overrides =
       if (token) {
         fullText += token;
         callbacks.onToken?.(token, fullText);
+      }
+    }
+    if (!fullText) {
+      const text = readJsonResponseText(rawBody);
+      if (text) {
+        fullText = text;
+        callbacks.onToken?.(text, fullText);
       }
     }
     requireUsableText(fullText);
@@ -203,17 +220,38 @@ export function readDeltaContent(event) {
   if (event === "[DONE]") return "";
   try {
     const payload = JSON.parse(event);
-    return readMessageContent(payload?.choices?.[0]?.delta?.content);
+    return payload?.type === "response.output_text.delta"
+      ? readMessageContent(payload.delta)
+      : readMessageContent(payload?.choices?.[0]?.delta?.content);
   } catch {
     return "";
   }
+}
+
+function readJsonResponseText(body) {
+  try {
+    return readResponseText(JSON.parse(body));
+  } catch {
+    return "";
+  }
+}
+
+function readResponseText(payload) {
+  return readMessageContent(payload?.choices?.[0]?.message?.content)
+    || readMessageContent(payload?.output_text)
+    || (Array.isArray(payload?.output)
+      ? payload.output
+        .filter((item) => item?.type === "message")
+        .map((item) => readMessageContent(item.content))
+        .join("")
+      : "");
 }
 
 function readMessageContent(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
-    .filter((part) => part?.type === "text" || typeof part?.text === "string")
+    .filter((part) => part?.type === "text" || part?.type === "output_text" || (!part?.type && typeof part?.text === "string"))
     .map((part) => String(part.text || ""))
     .join("");
 }

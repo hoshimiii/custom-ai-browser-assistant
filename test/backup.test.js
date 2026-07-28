@@ -21,8 +21,9 @@ test("createBackupPayload redacts both keys unless explicitly included", () => {
 });
 
 test("createBackupPayload redacts every model-instance key", () => {
-  const payload = createBackupPayload({ settings: { modelInstances: [{ id: "one", name: "One", apiKey: "secret" }], defaultModelInstanceId: "one" } }, "now");
+  const payload = createBackupPayload({ settings: { modelInstances: [{ id: "one", name: "One", apiKey: "secret", reasoningEffort: "high" }], defaultModelInstanceId: "one" } }, "now");
   assert.equal(payload.settings.modelInstances[0].apiKey, "");
+  assert.equal(payload.settings.modelInstances[0].reasoningEffort, "high");
 });
 
 test("parseBackupPayload rejects wrong app marker", () => {
@@ -83,6 +84,18 @@ test("mergeBackupPayload keeps matching redacted instance keys and never transfe
   const merged = mergeBackupPayload(current, backup);
   assert.deepEqual(merged.settings.modelInstances.map((item) => [item.id, item.apiKey]), [["one", "one-key"], ["three", ""], ["two", "two-key"]]);
   assert.equal(merged.settings.modelInstances[0].name, "Renamed");
+});
+
+test("backup merge retains per-instance reasoning effort", () => {
+  const current = createBackupPayload({ settings: {
+    modelInstances: [{ id: "one", name: "One", reasoningEffort: "high" }],
+    defaultModelInstanceId: "one"
+  } }, "old");
+  const backup = createBackupPayload({ settings: {
+    modelInstances: [{ id: "one", name: "One", reasoningEffort: "xhigh" }],
+    defaultModelInstanceId: "one"
+  } }, "new");
+  assert.equal(mergeBackupPayload(current, backup).settings.modelInstances[0].reasoningEffort, "xhigh");
 });
 
 test("legacy flat backup overlays the current default without changing its identity", () => {

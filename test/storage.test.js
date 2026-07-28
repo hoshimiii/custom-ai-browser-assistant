@@ -55,6 +55,22 @@ test("getSettings persists the canonical legacy migration once", async () => {
   }
 });
 
+test("getSettings retains valid effort and repairs invalid stored effort", async () => {
+  const storage = { settings: { modelInstances: [
+    { id: "gpt", model: "gpt-5", reasoningEffort: "high" },
+    { id: "bad", model: "other", reasoningEffort: "invalid" }
+  ], defaultModelInstanceId: "gpt" } };
+  const previousChrome = globalThis.chrome;
+  globalThis.chrome = { storage: { local: { async get(key) { return { [key]: storage[key] }; }, async set(next) { Object.assign(storage, next); } } } };
+  try {
+    const settings = await getSettings();
+    assert.deepEqual(settings.modelInstances.map((item) => item.reasoningEffort), ["high", ""]);
+    assert.equal(storage.settings.modelInstances[0].reasoningEffort, "high");
+  } finally {
+    globalThis.chrome = previousChrome;
+  }
+});
+
 test("page recipe storage upserts, finds, and deletes bounded recipes", async () => {
   const storage = { pageRecipes: [] };
   const previousChrome = globalThis.chrome;

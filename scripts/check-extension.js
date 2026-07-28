@@ -65,6 +65,14 @@ if (!sidePanelSource.includes("chrome.tabs.captureVisibleTab")) {
   errors.push("Missing side-panel visible-tab capture");
 }
 
+if (/from\s+["']\.\.\/shared\/pageRecipes\.js["']/.test(sidePanelSource) || /\bresolvePageRecipe\s*\(/.test(sidePanelSource) || sidePanelSource.includes("recipeSelectors")) {
+  errors.push("Side panel page operations must not use the page planner");
+}
+
+if (sidePanelSource.includes("本次将按普通聊天发送")) {
+  errors.push("Page-read failures must not downgrade to ordinary chat");
+}
+
 if (!manifest.commands?.["open-assistant"] || !manifest.commands?.["summarize-page"]) {
   errors.push("Missing expected keyboard commands");
 }

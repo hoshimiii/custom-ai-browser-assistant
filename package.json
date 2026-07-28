@@ -1,6 +1,6 @@
 {
   "name": "custom-ai-browser-assistant",
-  "version": "0.3.4",
+  "version": "0.3.7",
   "description": "A BYOK Chrome AI assistant extension with OpenAI-compatible APIs.",
   "type": "module",
   "private": true,

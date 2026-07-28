@@ -20,6 +20,19 @@ test("buildChatRequest uses settings model and stream", () => {
   assert.equal(request.messages.length, 1);
 });
 
+test("buildChatRequest sends valid effort only for the actual GPT-5 request model", () => {
+  const messages = [{ role: "user", content: "hi" }];
+  assert.equal(buildChatRequest({ ...settings, model: "openai/gpt-5", reasoningEffort: "high" }, messages).reasoning_effort, "high");
+  assert.equal(buildChatRequest({ ...settings, model: "gpt-5.4", reasoningEffort: "none" }, messages).reasoning_effort, "none");
+  assert.equal(buildChatRequest({ ...settings, model: "gpt-5.4", reasoningEffort: "minimal" }, messages).reasoning_effort, "minimal");
+  assert.equal("reasoning_effort" in buildChatRequest({ ...settings, model: "openai/gpt-5", reasoningEffort: "" }, messages), false);
+  assert.equal("reasoning_effort" in buildChatRequest({ ...settings, model: "openai/gpt-5", reasoningEffort: "invalid" }, messages), false);
+  assert.equal("reasoning_effort" in buildChatRequest({ ...settings, model: "gpt-4o", reasoningEffort: "high" }, messages), false);
+  assert.equal("reasoning_effort" in buildChatRequest({ ...settings, model: "gpt-5-audio", reasoningEffort: "high" }, messages), false);
+  assert.equal("reasoning_effort" in buildChatRequest({ ...settings, model: "openai/gpt-5-image", reasoningEffort: "high" }, messages), false);
+  assert.equal("reasoning_effort" in buildChatRequest({ ...settings, model: "gpt-5", reasoningEffort: "high" }, messages, { model: "other/model" }), false);
+});
+
 test("consumeSseBuffer parses full events and keeps remainder", () => {
   const input = 'data: {"choices":[{"delta":{"content":"你"}}]}\n\n' +
     'data: {"choices":[{"delta":{"content":"好"}}]}';
@@ -39,9 +52,21 @@ test("readDeltaContent returns token", () => {
   assert.equal(token, "hello");
 });
 
+test("readDeltaContent accepts Responses output text deltas without reasoning", () => {
+  assert.equal(readDeltaContent('{"type":"response.output_text.delta","delta":"hello"}'), "hello");
+  assert.equal(readDeltaContent('{"type":"response.reasoning_text.delta","delta":"hidden"}'), "");
+});
+
 test("requestChat accepts simple text-part content arrays", async () => {
   const text = await requestChat(settings, [{ role: "user", content: "hi" }], {
     fetchImpl: async () => jsonResponse({ choices: [{ message: { content: [{ type: "text", text: "hello" }] } }] })
+  });
+  assert.equal(text, "hello");
+});
+
+test("requestChat accepts untyped text parts but excludes reasoning parts", async () => {
+  const text = await requestChat(settings, [{ role: "user", content: "hi" }], {
+    fetchImpl: async () => jsonResponse({ choices: [{ message: { content: [{ text: "hello" }, { type: "reasoning", text: "hidden" }] } }] })
   });
   assert.equal(text, "hello");
 });
@@ -105,6 +130,36 @@ test("streamChat flushes a terminal SSE event without a separator", async () => 
     fetchImpl: async () => streamResponse('data: {"choices":[{"delta":{"content":"最后"}}]}')
   });
   assert.deepEqual(tokens, ["最后"]);
+});
+
+test("streamChat accepts Responses-style output text SSE", async () => {
+  const tokens = [];
+  await streamChat(settings, [{ role: "user", content: "hi" }], {
+    onToken: (token) => tokens.push(token)
+  }, {
+    fetchImpl: async () => streamResponse('data: {"type":"response.output_text.delta","delta":"你"}\n\ndata: {"type":"response.output_text.delta","delta":"好"}\n\ndata: [DONE]\n\n')
+  });
+  assert.deepEqual(tokens, ["你", "好"]);
+});
+
+test("streamChat accepts a Responses JSON completion returned while streaming", async () => {
+  const tokens = [];
+  await streamChat(settings, [{ role: "user", content: "hi" }], {
+    onToken: (token) => tokens.push(token)
+  }, {
+    fetchImpl: async () => streamResponse('{"output":[{"type":"message","content":[{"type":"output_text","text":"hello"}]}]}')
+  });
+  assert.deepEqual(tokens, ["hello"]);
+});
+
+test("streamChat accepts a Chat Completions JSON body returned while streaming", async () => {
+  const tokens = [];
+  await streamChat(settings, [{ role: "user", content: "hi" }], {
+    onToken: (token) => tokens.push(token)
+  }, {
+    fetchImpl: async () => streamResponse('{"choices":[{"message":{"content":"hello"}}]}')
+  });
+  assert.deepEqual(tokens, ["hello"]);
 });
 
 test("requestChat rejects an empty successful response", async () => {

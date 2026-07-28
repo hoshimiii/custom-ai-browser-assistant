@@ -1,6 +1,6 @@
 import { requestChat } from "../shared/apiClient.js";
 import { DEFAULT_SETTINGS } from "../shared/defaults.js";
-import { createModelInstance, duplicateModelInstance, normalizeModelSettings, removeModelInstance, resolveModelInstance } from "../shared/modelInstances.js";
+import { createModelInstance, duplicateModelInstance, isGptReasoningModel, normalizeModelSettings, removeModelInstance, resolveModelInstance } from "../shared/modelInstances.js";
 import { applyProviderPreset, PROVIDER_PRESETS } from "../shared/providers.js";
 import { exportBackup, getSettings, importBackup, saveSettings } from "../shared/storage.js";
 
@@ -33,6 +33,7 @@ async function init() {
     updateSelectedInstance(applyProviderPreset(selectedInstance(), form.elements.providerPreset.value));
     renderForm();
   });
+  form.elements.model.addEventListener("input", () => updateReasoningEffortVisibility());
   document.getElementById("addModelInstance").addEventListener("click", () => {
     syncEditorToDraft();
     draftSettings = createModelInstance(draftSettings);
@@ -88,9 +89,10 @@ function renderForm() {
     option.selected = item.id === selectedInstanceId;
     instanceList.append(option);
   }
-  fillFields(instance, ["modelInstanceName", "providerPreset", "baseUrl", "apiKey", "model", "supportsVision"], {
+  fillFields(instance, ["modelInstanceName", "providerPreset", "baseUrl", "apiKey", "model", "reasoningEffort", "supportsVision"], {
     modelInstanceName: instance.name
   });
+  updateReasoningEffortVisibility(instance.model);
   fillFields(draftSettings, ["targetLanguage", "timeoutSeconds", "ttsBaseUrl", "ttsApiKey", "ttsModel", "ttsVoice", "ttsSpeed", "ttsTimeoutSeconds", "pageChunkChars", "stream", "saveHistory", "systemPrompt"]);
   document.getElementById("deleteModelInstance").disabled = draftSettings.modelInstances.length === 1;
   document.getElementById("setDefaultModelInstance").disabled = selectedInstanceId === draftSettings.defaultModelInstanceId;
@@ -117,6 +119,7 @@ function syncEditorToDraft() {
     baseUrl: form.elements.baseUrl.value.trim(),
     apiKey: form.elements.apiKey.value.trim(),
     model: form.elements.model.value.trim(),
+    reasoningEffort: form.elements.reasoningEffort.value,
     supportsVision: form.elements.supportsVision.checked
   };
   draftSettings = normalizeModelSettings({
@@ -124,6 +127,10 @@ function syncEditorToDraft() {
     ...globals,
     modelInstances: draftSettings.modelInstances.map((item) => item.id === selectedInstanceId ? instance : item)
   });
+}
+
+function updateReasoningEffortVisibility(model = form.elements.model.value) {
+  document.getElementById("reasoningEffortField").hidden = !isGptReasoningModel(model);
 }
 
 function updateSelectedInstance(instance) {
