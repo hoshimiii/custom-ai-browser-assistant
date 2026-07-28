@@ -2,6 +2,8 @@ import { requestChat } from "./shared/apiClient.js";
 import { appendFloatingMessage, applyFloatingCompression, buildFloatingCompressionPrompt, buildFloatingSourcePrompt, createFloatingSession, shouldCompressFloatingSession } from "./shared/floatingMemory.js";
 import { getFloatingSessions, getFloatingSessionsForPage, getSettings, saveFloatingSession } from "./shared/storage.js";
 import { resolveModelInstance } from "./shared/modelInstances.js";
+import { SELECTION_ACTIONS } from "./shared/actions.js";
+import { buildSelectionPrompt } from "./shared/prompts.js";
 
 const CONTEXT_ACTIONS = [
   { id: "explain", title: "Explain with AI" },
@@ -137,7 +139,6 @@ async function handleMessage(message, sender) {
 }
 
 async function handleFloatingChatMessage(message, sender) {
-  const settings = await getDefaultRequestSettings();
   const sessions = await getFloatingSessions();
   const now = Date.now();
   let session = sessions.find((item) => item.id === message.sessionId);
@@ -151,10 +152,27 @@ async function handleFloatingChatMessage(message, sender) {
 
   const prompt = String(message.prompt || "").trim();
   if (!prompt) return { ok: false, error: "Empty prompt" };
-  const userMessage = buildFloatingUserMessage(session, prompt, message.source || {});
-  const assistantText = await requestChat(settings, userMessage);
+  const selectionAction = String(message.selectionAction || "").trim();
+  let currentSettings;
+  let modelPrompt = prompt;
+  if (selectionAction) {
+    if (!SELECTION_ACTIONS.some((action) => action.id === selectionAction)) {
+      return { ok: false, error: "Unknown selection action" };
+    }
+    const selectionText = String(message.source?.text || session.source?.text || "").trim();
+    if (!selectionText) return { ok: false, error: "Empty selection" };
+    currentSettings = await getSettings();
+    modelPrompt = buildSelectionPrompt(selectionAction, selectionText, currentSettings);
+  }
+
+  currentSettings ||= await getSettings();
+  const settings = resolveModelInstance(currentSettings, currentSettings.defaultModelInstanceId);
+  const userMessage = buildFloatingUserMessage(session, modelPrompt, message.source || {});
 
   session = appendFloatingMessage(session, { role: "user", content: prompt }, now);
+  await saveFloatingSession(session);
+  const assistantText = await requestChat(settings, userMessage);
+
   session = appendFloatingMessage(session, { role: "assistant", content: assistantText }, Date.now());
   await saveFloatingSession(session);
   return { ok: true, session, answer: assistantText };

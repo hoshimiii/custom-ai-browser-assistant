@@ -5,7 +5,8 @@ import { DEFAULT_SETTINGS, MESSAGE_LIMIT } from "../shared/defaults.js";
 import { buildSavedPageQuestionPrompt, searchSavedPages } from "../shared/library.js";
 import { buildPageIdentity, createSelectedRegionPageSnapshot, resolveSelectedRegionPageSnapshot } from "../shared/pageTypes.js";
 import { buildPageQuestionPrompt, buildPageSummaryPrompt, buildSearchPrompt, buildSelectionPrompt, buildWritingPrompt } from "../shared/prompts.js";
-import { clearHistory, deleteSavedPage, getHistory, getSavedPages, getSettings, saveConversation, savePageSnapshot } from "../shared/storage.js";
+import { FLOATING_SESSION_MESSAGE_LIMIT, mergeConversationHistory } from "../shared/floatingMemory.js";
+import { clearHistory, deleteSavedPage, getFloatingSessions, getHistory, getSavedPages, getSettings, saveConversation, savePageSnapshot } from "../shared/storage.js";
 import { buildInlineTranslationPrompt, parseInlineTranslationResponse } from "../shared/translation.js";
 import { buildImageQuestionMessage } from "../shared/vision.js";
 import { requestSpeech, splitTtsText } from "../shared/tts.js";
@@ -65,6 +66,9 @@ const elements = {
   refreshHistory: document.getElementById("refreshHistory"),
   clearStoredHistory: document.getElementById("clearStoredHistory"),
   historyList: document.getElementById("historyList"),
+  floatingHistoryDialog: document.getElementById("floatingHistoryDialog"),
+  floatingHistoryContent: document.getElementById("floatingHistoryContent"),
+  closeFloatingHistory: document.getElementById("closeFloatingHistory"),
   saveCurrentPage: document.getElementById("saveCurrentPage"),
   librarySearch: document.getElementById("librarySearch"),
   libraryList: document.getElementById("libraryList"),
@@ -143,6 +147,7 @@ function wireEvents() {
   elements.clearTranslations.addEventListener("click", clearPageTranslations);
   elements.refreshHistory.addEventListener("click", renderHistory);
   elements.clearStoredHistory.addEventListener("click", handleClearStoredHistory);
+  elements.closeFloatingHistory.addEventListener("click", () => elements.floatingHistoryDialog.close());
   elements.saveCurrentPage.addEventListener("click", saveCurrentPageToLibrary);
   elements.librarySearch.addEventListener("input", () => renderLibrary(elements.librarySearch.value));
   elements.clearChat.addEventListener("click", () => {
@@ -1043,14 +1048,19 @@ function setTtsStatus(message) {
 }
 
 async function renderHistory() {
-  const history = await getHistory();
+  const [history, floatingSessions] = await Promise.all([getHistory(), getFloatingSessions()]);
   elements.historyList.textContent = "";
-  for (const conversation of history.slice(0, 8)) {
+  for (const entry of mergeConversationHistory(history, floatingSessions).slice(0, 8)) {
+    const conversation = entry.record;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "history-item";
-    button.textContent = conversation.title || "Untitled";
+    button.textContent = entry.kind === "floating" ? `浮窗 · ${conversation.title || "未命名会话"}` : conversation.title || "Untitled";
     button.addEventListener("click", () => {
+      if (entry.kind === "floating") {
+        showFloatingHistory(conversation);
+        return;
+      }
       state.messages = conversation.messages || [];
       state.conversationId = conversation.id;
       state.conversationCreatedAt = conversation.createdAt || null;
@@ -1063,11 +1073,42 @@ async function renderHistory() {
   }
 }
 
+function showFloatingHistory(session) {
+  const content = elements.floatingHistoryContent;
+  content.textContent = "";
+  const addSection = (label, value) => {
+    const section = document.createElement("section");
+    const heading = document.createElement("strong");
+    const text = document.createElement("div");
+    heading.textContent = label;
+    text.textContent = value;
+    section.append(heading, text);
+    content.append(section);
+  };
+  addSection("标题", session.title || "未命名会话");
+  addSection("页面", session.pageTitle || session.pageUrl || "未知页面");
+  addSection("来源预览", (session.source?.text || session.source?.label || "网页上下文").slice(0, 600));
+  if (session.memorySummary) addSection("已压缩摘要", session.memorySummary);
+  const messages = session.messages || [];
+  if (!messages.some((message) => message.role === "assistant" && String(message.content || "").trim())) addSection("状态", "尚未获得回答");
+  if (messages.length) {
+    const messageLabel = session.memorySummary
+      ? "最近消息（非完整记录）"
+      : messages.length >= FLOATING_SESSION_MESSAGE_LIMIT
+        ? "最近消息（可能非完整记录）"
+        : "消息";
+    addSection(messageLabel, messages.map((message) => `${message.role === "user" ? "你" : "助手"}：${message.content || ""}`).join("\n\n"));
+  } else {
+    addSection("消息", "尚未获得回答");
+  }
+  elements.floatingHistoryDialog.showModal();
+}
+
 async function handleClearStoredHistory() {
   if (!state.clearHistoryArmed) {
     state.clearHistoryArmed = true;
     elements.clearStoredHistory.textContent = "再次点击确认";
-    addMessage("assistant", "再次点击“再次点击确认”会清空本地会话历史。");
+    addMessage("assistant", "再次点击“再次点击确认”会清空全部本地会话和浮窗记录。");
     window.setTimeout(() => {
       state.clearHistoryArmed = false;
       elements.clearStoredHistory.textContent = "清空记录";
@@ -1078,7 +1119,7 @@ async function handleClearStoredHistory() {
   elements.clearStoredHistory.textContent = "清空记录";
   await clearHistory();
   await renderHistory();
-  addMessage("assistant", "本地会话历史已清空。");
+  addMessage("assistant", "全部本地会话和浮窗记录已清空。");
 }
 
 async function renderLibrary(query = "") {

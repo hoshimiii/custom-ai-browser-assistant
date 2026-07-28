@@ -1,6 +1,13 @@
 (() => {
   const isTopFrame = window.top === window;
   const TOOLBAR_ID = "custom-ai-assistant-selection-toolbar";
+  const SELECTION_ACTION_LABELS = {
+    explain: "解释选中文本",
+    translate: "翻译选中文本",
+    summarize: "总结选中文本",
+    rewrite: "改写选中文本",
+    continue: "续写选中文本"
+  };
   const SEARCH_PANEL_ID = "custom-ai-assistant-search-panel";
   const DOCK_ID = "custom-ai-assistant-dock";
   const LAUNCHER_ID = "custom-ai-assistant-launcher";
@@ -379,17 +386,17 @@
       `;
       toolbar.addEventListener("mousedown", (event) => event.preventDefault());
       toolbar.addEventListener("click", (event) => {
+        if (!event.isTrusted) return;
         const button = event.target.closest("button[data-action]");
         if (!button) return;
         if (button.dataset.action === "floating-chat") {
-          openFloatingChatFromSelection(rect);
+          openFloatingChatFromSelection();
           hideToolbar();
           return;
         }
-        chrome.runtime.sendMessage({
-          type: "RUN_SELECTION_ACTION",
+        openFloatingChatFromSelection({
           action: button.dataset.action,
-          selectionText: lastSelection
+          label: SELECTION_ACTION_LABELS[button.dataset.action]
         });
         hideToolbar();
       });
@@ -582,7 +589,7 @@
     }).catch(() => {});
   }
 
-  async function openFloatingChatFromSelection() {
+  async function openFloatingChatFromSelection(initialAction = null) {
     const rect = lastSelectionRange?.getBoundingClientRect() || {
       left: window.innerWidth - 380,
       right: window.innerWidth - 16,
@@ -594,7 +601,7 @@
       label: "选中文本",
       title: document.title,
       text: lastSelection
-    }, rect);
+    }, rect, null, {}, initialAction);
   }
 
   async function openScreenshotPanel(anchorRect) {
@@ -654,7 +661,7 @@
     placeFloatingDialog(picker, anchorRect, placement);
   }
 
-  async function openFloatingChat(source, anchorRect, existingSession = null, placement = {}) {
+  async function openFloatingChat(source, anchorRect, existingSession = null, placement = {}, initialAction = null) {
     const start = existingSession ? { ok: true, session: existingSession } : await chrome.runtime.sendMessage({
       type: "FLOATING_CHAT_START",
       pageUrl: location.href,
@@ -671,7 +678,11 @@
       addFloatingChatMessage(dialog, "error", start?.error || "无法创建浮窗会话");
       return;
     }
-    renderFloatingSessionMessages(dialog, start.session);
+    if (initialAction?.action && initialAction?.label) {
+      await sendFloatingChatPrompt(dialog, source, initialAction.label, initialAction.action);
+    } else {
+      renderFloatingSessionMessages(dialog, start.session);
+    }
     scheduleFloatingCompression(start.session.id);
     dialog.querySelector("textarea").focus();
   }
@@ -728,7 +739,7 @@
     return dialog;
   }
 
-  async function sendFloatingChatPrompt(dialog, source, prompt) {
+  async function sendFloatingChatPrompt(dialog, source, prompt, selectionAction = "") {
     const sessionId = dialog.dataset.sessionId;
     if (!sessionId) {
       addFloatingChatMessage(dialog, "error", "浮窗会话尚未初始化。");
@@ -744,7 +755,8 @@
         pageUrl: location.href,
         pageTitle: document.title,
         source: serializeFloatingSource(source),
-        prompt
+        prompt,
+        selectionAction
       });
       if (!response?.ok) {
         throw new Error(response?.error || "请求失败");
