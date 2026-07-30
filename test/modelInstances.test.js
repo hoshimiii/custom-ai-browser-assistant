@@ -10,6 +10,8 @@ test("normalizes legacy settings into a stable vision-capable default instance",
   assert.equal(first.modelInstances[0].id, second.modelInstances[0].id);
   assert.equal(first.modelInstances[0].supportsVision, true);
   assert.equal(first.apiKey, "key");
+  assert.equal(first.localAsrEnabled, false);
+  assert.equal(first.localAsrToken, "");
 });
 
 test("repairs an invalid default and resolves a selected instance to flat settings", () => {

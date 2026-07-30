@@ -11,13 +11,15 @@ test("createBackupPayload includes version and app marker", () => {
   assert.equal(payload.settings.apiKey, "");
 });
 
-test("createBackupPayload redacts both keys unless explicitly included", () => {
-  const redacted = createBackupPayload({ settings: { apiKey: "secret", ttsApiKey: "tts-secret" } }, "now");
+test("createBackupPayload redacts tokens unless explicitly included", () => {
+  const redacted = createBackupPayload({ settings: { apiKey: "secret", ttsApiKey: "tts-secret", localAsrToken: "asr-secret" } }, "now");
   assert.equal(redacted.settings.apiKey, "");
   assert.equal(redacted.settings.ttsApiKey, "");
-  const payload = createBackupPayload({ settings: { apiKey: "secret", ttsApiKey: "tts-secret" } }, "now", { includeApiKey: true });
+  assert.equal(redacted.settings.localAsrToken, "");
+  const payload = createBackupPayload({ settings: { apiKey: "secret", ttsApiKey: "tts-secret", localAsrToken: "asr-secret" } }, "now", { includeApiKey: true });
   assert.equal(payload.settings.apiKey, "secret");
   assert.equal(payload.settings.ttsApiKey, "tts-secret");
+  assert.equal(payload.settings.localAsrToken, "asr-secret");
 });
 
 test("createBackupPayload redacts every model-instance key", () => {
@@ -64,12 +66,13 @@ test("mergeBackupPayload replace mode returns backup data", () => {
 });
 
 test("mergeBackupPayload preserves current keys when backup omits them", () => {
-  const current = createBackupPayload({ settings: { apiKey: "current-key", ttsApiKey: "current-tts-key" } }, "old", { includeApiKey: true });
-  const backup = createBackupPayload({ settings: { model: "new-model", apiKey: "backup-key", ttsApiKey: "backup-tts-key" } }, "new");
+  const current = createBackupPayload({ settings: { apiKey: "current-key", ttsApiKey: "current-tts-key", localAsrToken: "current-asr-token" } }, "old", { includeApiKey: true });
+  const backup = createBackupPayload({ settings: { model: "new-model", apiKey: "backup-key", ttsApiKey: "backup-tts-key", localAsrToken: "backup-asr-token" } }, "new");
   const merged = mergeBackupPayload(current, backup, "merge");
   assert.equal(merged.settings.model, "new-model");
   assert.equal(merged.settings.apiKey, "current-key");
   assert.equal(merged.settings.ttsApiKey, "current-tts-key");
+  assert.equal(merged.settings.localAsrToken, "current-asr-token");
 });
 
 test("mergeBackupPayload keeps matching redacted instance keys and never transfers them across IDs", () => {

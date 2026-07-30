@@ -57,6 +57,11 @@ if (backgroundSource.includes("captureVisibleTab") || contentSource.includes("ca
   errors.push("Visible-tab capture must remain inside the side panel extension page");
 }
 
+const unsafeContentChromeCalls = contentSource.match(/chrome\.(?:runtime\.sendMessage|storage\.local\.(?:get|set))\(/g) || [];
+if (unsafeContentChromeCalls.length !== 3 || !contentSource.includes("function sendRuntimeMessage(") || !contentSource.includes("function getLocalStorage(") || !contentSource.includes("function setLocalStorage(")) {
+  errors.push("Content-script runtime and storage calls must use the invalidation-safe helpers");
+}
+
 const selectionToolbarHandler = contentSource.match(/toolbar\.addEventListener\("click", \(event\) => \{([\s\S]*?)\n\s*\}\);/);
 if (!selectionToolbarHandler?.[1].includes("if (!event.isTrusted) return;")) {
   errors.push("Selection toolbar must reject synthetic clicks before acting on buttons");
@@ -93,6 +98,10 @@ if (/from\s+["']\.\.\/shared\/pageRecipes\.js["']/.test(sidePanelSource) || /\br
 
 if (sidePanelSource.includes("本次将按普通聊天发送")) {
   errors.push("Page-read failures must not downgrade to ordinary chat");
+}
+
+if (!sidePanelSource.includes("linkifyVideoTimestamps(fullText, videoTimestampUrl)") || !sidePanelSource.includes("parseVideoTimestampLink(`${anchor.textContent}(${anchor.href})`)") || !sidePanelSource.includes("handleVideoTimestampClick") || !sidePanelSource.includes("chrome.scripting.executeScript") || !sidePanelSource.includes("video.currentTime = seconds")) {
+  errors.push("Timed video summaries must persist timestamp links and seek with a bounded main-world script");
 }
 
 const renderHistorySource = sidePanelSource.match(/async function renderHistory\(\) \{([\s\S]*?)\n\}\n\nfunction showFloatingHistory/);

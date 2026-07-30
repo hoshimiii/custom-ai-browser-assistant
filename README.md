@@ -29,6 +29,7 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - Long page summarization with chunking and final synthesis.
 - Provider presets for OpenAI, OpenRouter, Ollama, LM Studio, and One API/New API style gateways.
 - YouTube-aware extraction for title, channel, description, visible transcript, and page text; Bilibili video extraction reads the top frame.
+- Video summaries first use available platform subtitles. If they are unavailable, an explicitly enabled loopback helper uploads bounded audio chunks from supported YouTube/Bilibili videos to Cloudflare ASR.
 - PDF page detection with graceful fallback text handling.
 - Screenshot Q&A with automatic visible-tab capture and side panel preview for vision-capable OpenAI-compatible models.
 - Screenshot Q&A can also start directly from the in-page quick rail and opens near the trigger position.
@@ -90,6 +91,23 @@ For page reading, configure global TTS in the options page. It uses the OpenAI-c
 ```http
 POST /audio/speech
 ```
+
+## Optional Cloudflare video transcription fallback
+
+This is disabled by default. It only runs after platform subtitles are unavailable, and only for supported active YouTube/Bilibili URLs. Start the existing `local-asr` helper yourself; the extension neither installs dependencies nor starts a service. The helper needs `yt-dlp` and `ffmpeg`, re-encodes audio into bounded 20-minute MP3 chunks, then uploads those chunks sequentially to Cloudflare Workers AI `@cf/openai/whisper-large-v3-turbo`. No frames, Qwen, or other multimodal analysis is used.
+
+```powershell
+cd local-asr
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+ $env:CLOUDFLARE_ACCOUNT_ID = "YOUR_ACCOUNT_ID"
+ $env:CLOUDFLARE_API_TOKEN = "YOUR_API_TOKEN"
+.\.venv\Scripts\python.exe asr_companion.py generate-token
+.\.venv\Scripts\python.exe asr_companion.py serve --origin chrome-extension://YOUR_32_LOWERCASE_ID --token YOUR_GENERATED_TOKEN
+```
+
+Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` only in the helper environment; never enter them in the extension. Copy the generated token to Options, enable Cloudflare video transcription, and use the displayed extension Origin in the command. The helper is fixed at `http://127.0.0.1:8765/v1`; temporary downloaded media and prepared chunks are cleaned up after the job. The resulting timed transcript is then sent to your configured chat model when generating the summary. The loopback token is redacted from normal backups and included only with the existing include-keys option.
 
 ## Development
 

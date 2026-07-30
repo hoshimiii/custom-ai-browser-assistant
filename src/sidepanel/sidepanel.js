@@ -1,10 +1,12 @@
 import { streamChat, requestChat } from "../shared/apiClient.js";
 import { findPageAction, PAGE_ACTIONS, WRITING_ACTIONS } from "../shared/actions.js";
-import { buildChunkSummaryPrompts, buildFinalSummaryPrompt, splitTextIntoChunks } from "../shared/chunking.js";
+import { buildChunkSummaryPrompts, buildFinalSummaryPrompt, getEffectivePageChunkChars, getPageSummaryText, splitTextIntoChunks } from "../shared/chunking.js";
 import { DEFAULT_SETTINGS, MESSAGE_LIMIT } from "../shared/defaults.js";
 import { buildSavedPageQuestionPrompt, searchSavedPages } from "../shared/library.js";
 import { buildPageIdentity, createSelectedRegionPageSnapshot, resolveSelectedRegionPageSnapshot } from "../shared/pageTypes.js";
 import { buildPageQuestionPrompt, buildPageSummaryPrompt, buildSearchPrompt, buildSelectionPrompt, buildWritingPrompt } from "../shared/prompts.js";
+import { describeEvidence, fetchPlatformSubtitle, replaceWithLocalAsr, replaceWithPlatformSubtitle } from "../shared/platformSubtitles.js";
+import { transcribeWithLocalAsr } from "../shared/localAsr.js";
 import { FLOATING_SESSION_MESSAGE_LIMIT, mergeConversationHistory } from "../shared/floatingMemory.js";
 import { clearHistory, deleteSavedPage, getFloatingSessions, getHistory, getSavedPages, getSettings, saveConversation, savePageSnapshot } from "../shared/storage.js";
 import { buildInlineTranslationPrompt, parseInlineTranslationResponse } from "../shared/translation.js";
@@ -12,6 +14,8 @@ import { buildImageQuestionMessage } from "../shared/vision.js";
 import { requestSpeech, splitTtsText } from "../shared/tts.js";
 import { resolveModelInstance } from "../shared/modelInstances.js";
 import { renderMarkdown } from "../shared/markdown.js";
+import { linkifyVideoTimestamps, parseVideoTimestampLink } from "../shared/videoTimestamps.js";
+import { canonicalizeLocalAsrVideoUrl } from "../shared/videoUrls.js";
 
 const state = {
   settings: DEFAULT_SETTINGS,
@@ -146,6 +150,7 @@ function wireEvents() {
   elements.showTranslations.addEventListener("click", () => sendActiveTabMessage({ type: "TOGGLE_TRANSLATIONS", hidden: false }));
   elements.clearTranslations.addEventListener("click", clearPageTranslations);
   elements.refreshHistory.addEventListener("click", renderHistory);
+  elements.messages.addEventListener("click", handleVideoTimestampClick);
   elements.clearStoredHistory.addEventListener("click", handleClearStoredHistory);
   elements.closeFloatingHistory.addEventListener("click", () => elements.floatingHistoryDialog.close());
   elements.saveCurrentPage.addEventListener("click", saveCurrentPageToLibrary);
@@ -301,6 +306,9 @@ async function runPageAction(actionId) {
     } else {
       await askModelDuringTask([{ role: "user", content: buildPageQuestionPrompt(prepared.page, action.prompt) }], prepared.signal, prepared.settings);
     }
+  } catch (error) {
+    if (prepared.signal.aborted) addMessage("assistant", "已停止。");
+    else addMessage("error", `页面操作失败：${error.message}`);
   } finally {
     endTask();
   }
@@ -521,12 +529,15 @@ async function askModel(newMessages) {
   state.abort = () => abortController.abort();
   try {
     await askModelDuringTask(newMessages, abortController.signal, currentRequestSettings());
+  } catch (error) {
+    if (abortController.signal.aborted) addMessage("assistant", "已停止。");
+    else throw error;
   } finally {
     endTask();
   }
 }
 
-async function askModelDuringTask(newMessages, signal, settings = currentRequestSettings()) {
+async function askModelDuringTask(newMessages, signal, settings = currentRequestSettings(), { videoTimestampUrl } = {}) {
   state.running = true;
 
   const assistantNode = addMessage("assistant", "");
@@ -549,11 +560,16 @@ async function askModelDuringTask(newMessages, signal, settings = currentRequest
       assistantNode.querySelector(".content").textContent = fullText;
     }
     if (!fullText.trim()) throw new Error("模型返回了空内容，请检查模型兼容性，或关闭流式输出后重试。");
+    if (videoTimestampUrl) fullText = linkifyVideoTimestamps(fullText, videoTimestampUrl);
     renderMarkdown(assistantNode.querySelector(".content"), fullText);
     state.messages.push(...newMessages.map(sanitizeMessageForHistory), { role: "assistant", content: fullText });
     trimMessages();
     await persist();
   } catch (error) {
+    if (signal?.aborted) {
+      assistantNode.remove();
+      throw error;
+    }
     assistantNode.classList.add("error");
     assistantNode.querySelector(".role").textContent = "ERROR";
     assistantNode.querySelector(".content").textContent = error.message;
@@ -561,14 +577,46 @@ async function askModelDuringTask(newMessages, signal, settings = currentRequest
 }
 
 async function summarizePage(page, signal, settings) {
-  const chunks = splitTextIntoChunks(page.text || "", state.settings.pageChunkChars);
+  let summaryPage = page;
+  if (page.scope !== "selected-region" && (page.type === "youtube" || page.type === "bilibili-video")) {
+    try {
+      const sourceTab = await getActiveTab();
+      if (isCurrentSummaryPage(sourceTab, page)) {
+        const metadata = await readPlatformPlayerMetadata(sourceTab.id);
+        if (signal.aborted) throw new Error("已停止");
+        if (isCurrentSummaryPage(await getActiveTab(), page)) {
+          const subtitle = await fetchPlatformSubtitle(page, metadata, { signal });
+          if (subtitle && isCurrentSummaryPage(await getActiveTab(), page)) summaryPage = replaceWithPlatformSubtitle(page, subtitle);
+        }
+      }
+    } catch (error) {
+      if (signal.aborted) throw error;
+    }
+  }
+  if (summaryPage === page && page.scope !== "selected-region" && (page.type === "youtube" || page.type === "bilibili-video") && settings.localAsrEnabled && settings.localAsrToken) {
+    addMessage("assistant", "未找到平台字幕；已启用 Cloudflare 视频转写，正在上传音频到 Cloudflare ASR…");
+    try {
+      const sourceTab = await getActiveTab();
+      if (isCurrentSummaryPage(sourceTab, page)) {
+        const transcript = await transcribeWithLocalAsr(page.url, settings.localAsrToken, { signal });
+        if (isCurrentSummaryPage(await getActiveTab(), page)) summaryPage = replaceWithLocalAsr(page, transcript);
+      }
+    } catch (error) {
+      if (signal.aborted) throw error;
+      addMessage("error", `Cloudflare 视频转写失败：${error.message}，已改用页面内容。`);
+    }
+  }
+  addMessage("assistant", describeEvidence(summaryPage));
+  const pageChunkChars = getEffectivePageChunkChars(settings.pageChunkChars);
+  const videoTimestampOptions = summaryPage.evidence?.timed === true ? { videoTimestampUrl: summaryPage.url } : undefined;
+  const chunks = splitTextIntoChunks(getPageSummaryText(summaryPage), pageChunkChars);
   if (chunks.length <= 1) {
-    await askModelDuringTask([{ role: "user", content: buildPageSummaryPrompt(page) }], signal, settings);
+    await askModelDuringTask([{ role: "user", content: buildPageSummaryPrompt(summaryPage) }], signal, settings, videoTimestampOptions);
     return;
   }
   try {
     addMessage("assistant", `页面较长，正在分 ${chunks.length} 段摘要后汇总。`);
-    const chunkPrompts = buildChunkSummaryPrompts(page, state.settings.pageChunkChars);
+    const chunkPrompts = buildChunkSummaryPrompts(summaryPage, pageChunkChars);
     const partials = [];
     for (const chunk of chunkPrompts) {
       if (signal.aborted) {
@@ -580,8 +628,9 @@ async function summarizePage(page, signal, settings) {
       partials.push(partial);
       addMessage("assistant", `分块 ${chunk.index + 1}/${chunk.total} 摘要完成。`);
     }
-    await askModelDuringTask([{ role: "user", content: buildFinalSummaryPrompt(page, partials) }], signal, settings);
+    await askModelDuringTask([{ role: "user", content: buildFinalSummaryPrompt(summaryPage, partials) }], signal, settings, videoTimestampOptions);
   } catch (error) {
+    if (signal.aborted) throw error;
     addMessage("error", `长页面摘要失败：${error.message}`);
   }
 }
@@ -773,6 +822,33 @@ async function sendActiveTabMessage(message, options = undefined) {
 async function getActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   return tabs[0];
+}
+
+async function handleVideoTimestampClick(event) {
+  const anchor = event.target.closest?.("a.video-timestamp-link");
+  if (!anchor || !elements.messages.contains(anchor)) return;
+  event.preventDefault();
+  const link = parseVideoTimestampLink(`${anchor.textContent}(${anchor.href})`);
+  if (!link || anchor.dataset.videoSeconds !== String(link.seconds) || anchor.dataset.videoUrl !== link.url) return;
+  try {
+    const tab = await getActiveTab();
+    const sameVideo = canonicalizeLocalAsrVideoUrl(tab?.url) === canonicalizeLocalAsrVideoUrl(link.url);
+    if (sameVideo && tab?.id) {
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, world: "MAIN", args: [link.seconds], func: (seconds) => {
+          const video = document.querySelector("video");
+          if (!(video instanceof HTMLMediaElement) || !Number.isSafeInteger(seconds) || seconds < 0) return false;
+          video.currentTime = seconds;
+          return true;
+        }
+      });
+      if (result?.result) return;
+    }
+    if (!tab?.id) throw new Error("未找到活动标签页");
+    await chrome.tabs.update(tab.id, { url: link.url });
+  } catch {
+    addMessage("error", "跳转视频时间点失败，请重试。");
+  }
 }
 
 async function createPageTarget(page) {
@@ -1071,6 +1147,31 @@ async function renderHistory() {
     });
     elements.historyList.append(button);
   }
+}
+
+function isCurrentSummaryPage(tab, page) {
+  return tab?.id === state.currentTabId && buildPageIdentity(tab.id, tab.url) === buildPageIdentity(state.currentTabId, page.url);
+}
+
+async function readPlatformPlayerMetadata(tabId) {
+  if (!tabId || !chrome.scripting?.executeScript) return null;
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", func: () => {
+      let player = window.ytInitialPlayerResponse;
+      if (!player) {
+        try { player = JSON.parse(window.ytplayer?.config?.args?.player_response || "null"); } catch { player = null; }
+      }
+      const youtubeTracks = (player?.captions?.playerCaptionsTracklistRenderer?.captionTracks || []).slice(0, 20).map((track) => ({
+        baseUrl: String(track?.baseUrl || ""), kind: String(track?.kind || ""), languageCode: String(track?.languageCode || ""), name: track?.name?.simpleText ? { simpleText: String(track.name.simpleText) } : undefined
+      }));
+      const state = window.__INITIAL_STATE__;
+      const playinfo = window.__playinfo__;
+      const pageIndex = Math.max(0, Number(state?.p || 1) - 1);
+      const bilibiliCid = state?.cid || state?.videoData?.pages?.[pageIndex]?.cid || state?.videoData?.cid || playinfo?.data?.cid || "";
+      return { youtubeTracks, bilibiliCid: String(bilibiliCid || "") };
+    }
+  });
+  return result?.result || null;
 }
 
 function showFloatingHistory(session) {

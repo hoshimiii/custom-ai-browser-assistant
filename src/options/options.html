@@ -115,6 +115,20 @@
             <input id="ttsTimeoutSeconds" type="number" min="1" max="600" step="1">
           </label>
         </fieldset>
+        <fieldset>
+          <legend>Cloudflare 视频转写（字幕缺失时备用）</legend>
+          <label class="checkbox">
+            <input id="localAsrEnabled" type="checkbox">
+            <span>启用 Cloudflare 视频转写</span>
+          </label>
+          <label>
+            <span>本地助手 Token</span>
+            <input id="localAsrToken" type="password" autocomplete="off">
+          </label>
+          <p>服务地址固定为 <code>http://127.0.0.1:8765/v1</code>。字幕失败后，启用时助手会将音频上传到 Cloudflare ASR；Cloudflare Account ID 和 API Token 只在助手环境变量中配置。</p>
+          <p>当前扩展 Origin：<code id="localAsrOrigin"></code></p>
+          <button id="testLocalAsr" type="button">测试 Cloudflare 视频转写助手</button>
+        </fieldset>
         <div class="actions">
           <button id="testConnection" type="button">Test</button>
           <button type="submit">Save</button>
@@ -138,7 +152,7 @@
             <span>Replace existing data</span>
           </label>
         </div>
-        <p class="warning-text">API Keys 默认不会导出。只有勾选上方选项时，导出的 JSON 才会包含聊天和 TTS API Key。</p>
+        <p class="warning-text">API Keys 和本地助手 Token 默认不会导出。只有勾选上方选项时才会包含。</p>
       </section>
       <section class="shortcut-panel">
         <h2>Shortcuts</h2>

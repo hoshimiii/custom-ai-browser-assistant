@@ -51,6 +51,7 @@ function normalizeSettingsForBackup(settings, options = {}) {
     ...normalized,
     apiKey: options.includeApiKey ? normalized.apiKey : "",
     ttsApiKey: options.includeApiKey ? normalized.ttsApiKey || "" : "",
+    localAsrToken: options.includeApiKey ? normalized.localAsrToken || "" : "",
     modelInstances: normalized.modelInstances.map((instance) => ({ ...instance, apiKey: options.includeApiKey ? instance.apiKey : "" }))
   };
 }
@@ -66,6 +67,7 @@ function mergeSettings(current, incoming, incomingIsLegacy) {
       ...incomingSettings,
       apiKey: defaultInstance.apiKey,
       ttsApiKey: incomingSettings.ttsApiKey || currentSettings.ttsApiKey,
+      localAsrToken: incomingSettings.localAsrToken || currentSettings.localAsrToken,
       modelInstances: currentSettings.modelInstances.map((item) => item.id === defaultInstance.id ? {
         ...item,
         ...legacyInstance,
@@ -91,6 +93,7 @@ function mergeSettings(current, incoming, incomingIsLegacy) {
     ...currentSettings,
     ...incomingSettings,
     ttsApiKey: incomingSettings.ttsApiKey || currentSettings.ttsApiKey,
+    localAsrToken: incomingSettings.localAsrToken || currentSettings.localAsrToken,
     modelInstances,
     defaultModelInstanceId
   });

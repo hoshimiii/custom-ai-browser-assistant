@@ -1,4 +1,5 @@
 import { requestChat } from "../shared/apiClient.js";
+import { testLocalAsrHealth } from "../shared/localAsr.js";
 import { DEFAULT_SETTINGS } from "../shared/defaults.js";
 import { createModelInstance, duplicateModelInstance, isGptReasoningModel, normalizeModelSettings, removeModelInstance, resolveModelInstance } from "../shared/modelInstances.js";
 import { applyProviderPreset, PROVIDER_PRESETS } from "../shared/providers.js";
@@ -12,6 +13,7 @@ const exportBackupButton = document.getElementById("exportBackup");
 const importBackupInput = document.getElementById("importBackup");
 const replaceOnImport = document.getElementById("replaceOnImport");
 const includeApiKeyInBackup = document.getElementById("includeApiKeyInBackup");
+const testLocalAsr = document.getElementById("testLocalAsr");
 let draftSettings;
 let selectedInstanceId;
 let dirty = false;
@@ -66,6 +68,8 @@ async function init() {
   });
   form.addEventListener("submit", handleSave);
   testConnection.addEventListener("click", handleTest);
+  testLocalAsr.addEventListener("click", handleLocalAsrTest);
+  document.getElementById("localAsrOrigin").textContent = location.origin;
   exportBackupButton.addEventListener("click", handleExportBackup);
   importBackupInput.addEventListener("change", handleImportBackup);
 }
@@ -93,7 +97,7 @@ function renderForm() {
     modelInstanceName: instance.name
   });
   updateReasoningEffortVisibility(instance.model);
-  fillFields(draftSettings, ["targetLanguage", "timeoutSeconds", "ttsBaseUrl", "ttsApiKey", "ttsModel", "ttsVoice", "ttsSpeed", "ttsTimeoutSeconds", "pageChunkChars", "stream", "saveHistory", "systemPrompt"]);
+  fillFields(draftSettings, ["targetLanguage", "timeoutSeconds", "ttsBaseUrl", "ttsApiKey", "ttsModel", "ttsVoice", "ttsSpeed", "ttsTimeoutSeconds", "localAsrEnabled", "localAsrToken", "pageChunkChars", "stream", "saveHistory", "systemPrompt"]);
   document.getElementById("deleteModelInstance").disabled = draftSettings.modelInstances.length === 1;
   document.getElementById("setDefaultModelInstance").disabled = selectedInstanceId === draftSettings.defaultModelInstanceId;
 }
@@ -160,6 +164,8 @@ function readGlobalFields() {
     ttsVoice: form.elements.ttsVoice.value.trim() || DEFAULT_SETTINGS.ttsVoice,
     ttsSpeed: Number(form.elements.ttsSpeed.value || DEFAULT_SETTINGS.ttsSpeed),
     ttsTimeoutSeconds: Number(form.elements.ttsTimeoutSeconds.value || DEFAULT_SETTINGS.ttsTimeoutSeconds),
+    localAsrEnabled: form.elements.localAsrEnabled.checked,
+    localAsrToken: form.elements.localAsrToken.value.trim(),
     pageChunkChars: Number(form.elements.pageChunkChars.value || DEFAULT_SETTINGS.pageChunkChars),
     stream: form.elements.stream.checked,
     saveHistory: form.elements.saveHistory.checked,
@@ -188,6 +194,17 @@ async function handleTest() {
     showStatus(`连接成功：${text.slice(0, 80)}`);
   } catch (error) {
     showStatus(`连接失败：${error.message}`);
+  }
+}
+
+async function handleLocalAsrTest() {
+  syncEditorToDraft();
+  showStatus("正在测试 Cloudflare 视频转写助手…");
+  try {
+    await testLocalAsrHealth(draftSettings.localAsrToken);
+    showStatus("Cloudflare 视频转写助手端点可访问；Cloudflare 配置和媒体路径尚未测试。");
+  } catch (error) {
+    showStatus(`Cloudflare 视频转写助手连接失败：${error.message}`);
   }
 }
 

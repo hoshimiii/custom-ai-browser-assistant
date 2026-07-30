@@ -18,6 +18,7 @@ Depending on the user action, the request may include:
 - Selected text from the active page.
 - Extracted text from the active page.
 - YouTube page metadata, description, visible transcript, and visible page text.
+- When explicitly enabled after platform subtitles are unavailable, a supported active YouTube/Bilibili URL is sent to the user-started loopback helper at `127.0.0.1:8765`. This user-triggered fallback is disabled by default. The helper downloads the audio, re-encodes it into bounded 20-minute MP3 chunks, uploads chunks sequentially to Cloudflare Workers AI for transcription, and cleans up temporary local media. Cloudflare Account ID and API token stay only in the helper environment and are never stored by the extension. The resulting transcript is sent to the user's configured chat model for the requested summary.
 - PDF page metadata and any extractable visible text.
 - Screenshot image data when the user clicks screenshot Q&A, and only when the selected instance is explicitly configured as vision-capable.
 - Saved-page library snapshots when the user asks questions against saved content.
@@ -37,7 +38,7 @@ The extension stores the following data in `chrome.storage.local`:
 - In-page floating chat sessions, grouped by webpage URL. These store source metadata, text excerpts, chat messages, and compressed memory summaries. Screenshot image data is used for the model request but is not stored in floating session memory.
 - Page recipes keyed by origin, page type, and operation. A recipe contains only locally validated selector signatures and timestamps; it does not contain page text, DOM snapshots, raw planner output, or model-authored selectors.
 
-Users can export or import this data from the options page. Backups include model instances and page recipes, but do not include any API keys by default; exporting chat-instance or TTS keys requires the explicit API-key opt-in. Generated TTS audio and its source text are ephemeral: they are not stored in conversation history or backups. Users can also clear stored conversation history and delete saved pages from the side panel.
+Users can export or import this data from the options page. Backups include model instances and page recipes, but do not include any API keys or loopback-helper token by default; exporting those values requires the explicit include-keys opt-in. Generated TTS audio and its source text are ephemeral: they are not stored in conversation history or backups. Users can also clear stored conversation history and delete saved pages from the side panel.
 
 ## Permissions
 
