@@ -122,6 +122,14 @@
       </article>
     </template>
 
+    <dialog id="floatingHistoryDialog" class="floating-history-dialog" aria-labelledby="floatingHistoryTitle">
+      <div class="floating-history-header">
+        <h2 id="floatingHistoryTitle">浮窗会话记录</h2>
+        <button id="closeFloatingHistory" type="button">关闭</button>
+      </div>
+      <div id="floatingHistoryContent" class="floating-history-content"></div>
+    </dialog>
+
     <script type="module" src="sidepanel.js"></script>
   </body>
 </html>

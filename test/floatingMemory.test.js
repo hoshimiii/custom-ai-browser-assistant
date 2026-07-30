@@ -6,6 +6,8 @@ import {
   buildFloatingSourcePrompt,
   createFloatingSession,
   FLOATING_IDLE_COMPRESSION_MS,
+  FLOATING_SESSION_MESSAGE_LIMIT,
+  mergeConversationHistory,
   normalizeFloatingPageKey,
   shouldCompressFloatingSession,
   upsertFloatingSession
@@ -35,6 +37,14 @@ test("upsertFloatingSession replaces by id and sorts newest first", () => {
   assert.equal(result[0].title, "new");
 });
 
+test("mergeConversationHistory distinguishes kinds and sorts by latest timestamp", () => {
+  const entries = mergeConversationHistory(
+    [{ id: "history", updatedAt: 200 }],
+    [{ id: "floating", createdAt: 300 }]
+  );
+  assert.deepEqual(entries.map((entry) => [entry.kind, entry.record.id]), [["floating", "floating"], ["conversation", "history"]]);
+});
+
 test("shouldCompressFloatingSession waits for five idle minutes", () => {
   let session = createFloatingSession({ id: "s", pageUrl: "https://example.com" }, 1000);
   for (let index = 0; index < 6; index += 1) {
@@ -53,6 +63,15 @@ test("applyFloatingCompression stores summary and keeps recent messages", () => 
   assert.equal(compressed.memorySummary, "summary");
   assert.equal(compressed.messages.length, 4);
   assert.equal(compressed.compressedAt, 1000);
+});
+
+test("appendFloatingMessage retains only the configured recent-message limit", () => {
+  let session = createFloatingSession({ id: "s", pageUrl: "https://example.com" }, 100);
+  for (let index = 0; index <= FLOATING_SESSION_MESSAGE_LIMIT; index += 1) {
+    session = appendFloatingMessage(session, { role: "user", content: `m${index}` }, 100 + index);
+  }
+  assert.equal(session.messages.length, FLOATING_SESSION_MESSAGE_LIMIT);
+  assert.equal(session.messages[0].content, "m1");
 });
 
 test("buildFloatingSourcePrompt marks screenshot context", () => {

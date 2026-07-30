@@ -6,7 +6,7 @@ export function detectPageType(url, mimeType = "") {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
     const path = parsed.pathname.toLowerCase();
-    if (host.includes("youtube.com") && path === "/watch") return "youtube";
+    if (host === "www.youtube.com" && path === "/watch") return "youtube";
     if (host === "youtu.be") return "youtube";
     if (host === "www.bilibili.com" && path.startsWith("/video/")) return "bilibili-video";
     if (path.endsWith(".pdf")) return "pdf";
@@ -83,6 +83,7 @@ export function buildPageContext(page) {
       "页面类型：哔哩哔哩视频",
       `视频标题：${page.title || "无标题"}`,
       `视频 URL：${page.url || "未知"}`,
+      page.transcript ? `字幕/转录：\n${page.transcript}` : "",
       page.text ? `页面可见文本：\n${page.text}` : ""
     ].filter(Boolean).join("\n\n");
   }

@@ -60,7 +60,7 @@ export async function saveConversation(conversation) {
 }
 
 export async function clearHistory() {
-  await chrome.storage.local.set({ history: [] });
+  await chrome.storage.local.set({ history: [], floatingSessions: [] });
 }
 
 export async function getSavedPages() {

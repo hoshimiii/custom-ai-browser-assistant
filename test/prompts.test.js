@@ -19,3 +19,10 @@ test("buildSelectionPrompt supports translate action", () => {
   assert.match(prompt, /翻译成中文/);
   assert.match(prompt, /hello/);
 });
+
+test("buildSelectionPrompt supports every selection-toolbar action", () => {
+  for (const action of ["explain", "translate", "summarize", "rewrite", "continue"]) {
+    assert.match(buildSelectionPrompt(action, "选中文本", { targetLanguage: "English", tone: "正式" }), /选中文本/);
+  }
+  assert.match(buildSelectionPrompt("rewrite", "选中文本", { tone: "正式" }), /正式/);
+});

@@ -1,3 +1,5 @@
+import { parseVideoTimestampLink } from "./videoTimestamps.js";
+
 export function parseMarkdown(source) {
   const lines = String(source || "").replace(/\r\n?/g, "\n").split("\n");
   const blocks = [];
@@ -46,12 +48,24 @@ export function parseMarkdown(source) {
 }
 
 function appendInline(parent, text) {
-  for (const part of String(text).split(/(`[^`]*`)/g)) {
+  for (const part of String(text).split(/(`[^`]*`|\[[^\]]+]\([^)]*\))/g)) {
     if (part.startsWith("`") && part.endsWith("`")) {
       const code = document.createElement("code");
       code.textContent = part.slice(1, -1);
       parent.append(code);
-    } else parent.append(document.createTextNode(part));
+    } else {
+      const link = parseVideoTimestampLink(part);
+      if (!link) parent.append(document.createTextNode(part));
+      else {
+        const anchor = document.createElement("a");
+        anchor.className = "video-timestamp-link";
+        anchor.href = link.url;
+        anchor.dataset.videoSeconds = String(link.seconds);
+        anchor.dataset.videoUrl = link.url;
+        anchor.textContent = link.label;
+        parent.append(anchor);
+      }
+    }
   }
 }
 

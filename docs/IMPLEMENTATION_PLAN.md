@@ -20,11 +20,11 @@ This project aims to cover the most common Monica-like browser assistant workflo
 | Writing assistant | Implemented | Polishes focused editable fields and writes result back. |
 | Local history | Partial | Saves recent conversations, shows a compact history list, and supports clearing stored history. |
 | Saved-page library | Implemented | Saves active pages, searches local snapshots, asks questions grounded in saved content, and deletes saved pages. |
-| Backup/restore | Implemented | Options exports/imports settings, model instances, recipes, history, saved pages, and floating sessions; all API keys are redacted unless include-keys is explicitly selected. |
+| Backup/restore | Implemented | Options exports/imports settings, model instances, recipes, history, saved pages, and floating sessions; API keys and loopback-helper tokens are redacted unless include-keys is explicitly selected. |
 | Screenshot Q&A | Implemented | Captures the visible tab, previews it in the side panel, then sends an OpenAI-compatible image message only when the selected instance is explicitly vision-capable. |
 | Long page chunking | Implemented | Splits long pages, summarizes chunks, then synthesizes final summary. |
 | Provider presets | Implemented | OpenAI, OpenRouter, Ollama, LM Studio, One API/New API, custom. |
-| YouTube/Bilibili extraction | Implemented | Detects video pages; YouTube extracts title, channel, description, visible transcript, and page text, while Bilibili extraction targets the readable top frame. |
+| YouTube/Bilibili extraction | Implemented | Summaries first fetch complete platform subtitles when available; otherwise, an explicitly enabled, token-authenticated loopback helper uploads bounded sequential audio chunks to Cloudflare Workers AI Whisper Large V3 Turbo for supported URLs. Bilibili AI conclusion remains deferred because it requires SESSDATA/WBI and may enqueue generation. |
 | Page recipe planning | Implemented | A first user-triggered page-grounded operation may make one non-streaming planning call with bounded local candidate labels/previews. Only returned candidate IDs are accepted; selectors/signatures are generated and validated locally, and stale recipes fall back or replan. |
 | PDF detection | Partial | Detects PDF pages and provides a graceful fallback until a dedicated parser is added. |
 | Knowledge base | Planned | IndexedDB storage and retrieval layer. |

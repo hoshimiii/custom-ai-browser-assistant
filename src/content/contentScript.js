@@ -1,6 +1,13 @@
 (() => {
   const isTopFrame = window.top === window;
   const TOOLBAR_ID = "custom-ai-assistant-selection-toolbar";
+  const SELECTION_ACTION_LABELS = {
+    explain: "解释选中文本",
+    translate: "翻译选中文本",
+    summarize: "总结选中文本",
+    rewrite: "改写选中文本",
+    continue: "续写选中文本"
+  };
   const SEARCH_PANEL_ID = "custom-ai-assistant-search-panel";
   const DOCK_ID = "custom-ai-assistant-dock";
   const LAUNCHER_ID = "custom-ai-assistant-launcher";
@@ -9,6 +16,7 @@
   const SESSION_PICKER_CLASS = "custom-ai-assistant-session-picker";
   const DOCK_STATE_KEY = "customAiAssistantDockState";
   const FLOATING_CHAT_IDLE_MS = 5 * 60 * 1000;
+  const REFRESH_PAGE_MESSAGE = "扩展已更新，请刷新页面后重试。";
   const TRANSLATABLE_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,figcaption,td,th,dd,dt,summary";
   const TRANSLATION_FALLBACK_SELECTOR = "article,section,div";
   const CONTAINER_SELECTOR = "article,main,[role='main'],section,div";
@@ -48,6 +56,42 @@
   let highlightedPickNode = null;
   let dockDragStart = null;
   const floatingCompressionTimers = new Map();
+
+  function hasExtensionContext() {
+    try {
+      return Boolean(chrome?.runtime?.id);
+    } catch {
+      return false;
+    }
+  }
+
+  async function sendRuntimeMessage(message, fallback) {
+    if (!hasExtensionContext()) return fallback;
+    try {
+      return await chrome.runtime.sendMessage(message);
+    } catch {
+      return fallback;
+    }
+  }
+
+  async function getLocalStorage(keys, fallback = {}) {
+    if (!hasExtensionContext()) return fallback;
+    try {
+      return await chrome.storage.local.get(keys);
+    } catch {
+      return fallback;
+    }
+  }
+
+  async function setLocalStorage(values) {
+    if (!hasExtensionContext()) return false;
+    try {
+      await chrome.storage.local.set(values);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   document.addEventListener("mouseup", handleSelection);
   document.addEventListener("keyup", handleSelection);
@@ -183,7 +227,7 @@
       const current = new URL(url);
       const host = current.hostname.toLowerCase();
       const path = current.pathname.toLowerCase();
-      if ((host.includes("youtube.com") && path === "/watch") || host === "youtu.be") return "youtube";
+      if ((host === "www.youtube.com" && path === "/watch") || host === "youtu.be") return "youtube";
       if (host === "www.bilibili.com" && path.startsWith("/video/")) return "bilibili-video";
       if (path.endsWith(".pdf")) return "pdf";
     } catch {
@@ -379,17 +423,17 @@
       `;
       toolbar.addEventListener("mousedown", (event) => event.preventDefault());
       toolbar.addEventListener("click", (event) => {
+        if (!event.isTrusted) return;
         const button = event.target.closest("button[data-action]");
         if (!button) return;
         if (button.dataset.action === "floating-chat") {
-          openFloatingChatFromSelection(rect);
+          openFloatingChatFromSelection();
           hideToolbar();
           return;
         }
-        chrome.runtime.sendMessage({
-          type: "RUN_SELECTION_ACTION",
+        openFloatingChatFromSelection({
           action: button.dataset.action,
-          selectionText: lastSelection
+          label: SELECTION_ACTION_LABELS[button.dataset.action]
         });
         hideToolbar();
       });
@@ -418,7 +462,7 @@
     `;
     panel.querySelector(".caa-search-query").textContent = query;
     panel.querySelector("button").addEventListener("click", () => {
-      chrome.runtime.sendMessage({ type: "RUN_SEARCH_ACTION", query });
+      void sendRuntimeMessage({ type: "RUN_SEARCH_ACTION", query });
     });
     const target = document.querySelector("main") || document.body;
     target.prepend(panel);
@@ -489,7 +533,7 @@
         dock.dataset.dragged = "false";
         return;
       }
-      chrome.runtime.sendMessage({ type: "OPEN_SIDE_PANEL" });
+      void sendRuntimeMessage({ type: "OPEN_SIDE_PANEL" });
     });
     edgeToggle.addEventListener("click", () => toggleDockEdge(dock));
     document.addEventListener("mousemove", (event) => {
@@ -512,7 +556,7 @@
   }
 
   async function restoreDockState(dock) {
-    const saved = await chrome.storage.local.get(DOCK_STATE_KEY).catch(() => ({}));
+    const saved = await getLocalStorage(DOCK_STATE_KEY);
     const state = saved[DOCK_STATE_KEY] || {};
     if (Number.isFinite(state.top)) {
       placeDockAt(dock, state.top);
@@ -574,15 +618,15 @@
     const visibleTop = Number(dock.dataset.visibleTop);
     const edgeHidden = patch.edgeHidden ?? dock.classList.contains("is-edge-hidden");
     const top = edgeHidden && Number.isFinite(visibleTop) ? visibleTop : rect.top;
-    chrome.storage.local.set({
+    void setLocalStorage({
       [DOCK_STATE_KEY]: {
         top: Math.round(top),
         edgeHidden
       }
-    }).catch(() => {});
+    });
   }
 
-  async function openFloatingChatFromSelection() {
+  async function openFloatingChatFromSelection(initialAction = null) {
     const rect = lastSelectionRange?.getBoundingClientRect() || {
       left: window.innerWidth - 380,
       right: window.innerWidth - 16,
@@ -594,14 +638,14 @@
       label: "选中文本",
       title: document.title,
       text: lastSelection
-    }, rect);
+    }, rect, null, {}, initialAction);
   }
 
   async function openScreenshotPanel(anchorRect) {
-    const response = await chrome.runtime.sendMessage({ type: "OPEN_SIDE_PANEL" }).catch((error) => ({
-      ok: false,
-      error: error.message
-    }));
+    const response = await sendRuntimeMessage(
+      { type: "OPEN_SIDE_PANEL" },
+      { ok: false, error: REFRESH_PAGE_MESSAGE }
+    );
     if (!response?.ok) {
       await openFloatingChat({
         type: "page",
@@ -613,10 +657,10 @@
   }
 
   async function openFloatingSessionPicker(anchorRect, placement = {}) {
-    const loaded = await chrome.runtime.sendMessage({
+    const loaded = await sendRuntimeMessage({
       type: "FLOATING_CHAT_LOAD",
       pageUrl: location.href
-    }).catch(() => ({ ok: false, sessions: [] }));
+    }, { ok: false, sessions: [] });
     const sessions = loaded?.sessions || [];
     if (!sessions.length) {
       await openFloatingChat(buildPageFloatingSource(), anchorRect, null, placement);
@@ -654,13 +698,13 @@
     placeFloatingDialog(picker, anchorRect, placement);
   }
 
-  async function openFloatingChat(source, anchorRect, existingSession = null, placement = {}) {
-    const start = existingSession ? { ok: true, session: existingSession } : await chrome.runtime.sendMessage({
+  async function openFloatingChat(source, anchorRect, existingSession = null, placement = {}, initialAction = null) {
+    const start = existingSession ? { ok: true, session: existingSession } : await sendRuntimeMessage({
       type: "FLOATING_CHAT_START",
       pageUrl: location.href,
       pageTitle: document.title,
       source: serializeFloatingSource(source)
-    }).catch((error) => ({ ok: false, error: error.message }));
+    }, { ok: false, error: REFRESH_PAGE_MESSAGE });
 
     const dialog = createFloatingChatDialog(source, start?.session);
     document.documentElement.appendChild(dialog);
@@ -671,7 +715,11 @@
       addFloatingChatMessage(dialog, "error", start?.error || "无法创建浮窗会话");
       return;
     }
-    renderFloatingSessionMessages(dialog, start.session);
+    if (initialAction?.action && initialAction?.label) {
+      await sendFloatingChatPrompt(dialog, source, initialAction.label, initialAction.action);
+    } else {
+      renderFloatingSessionMessages(dialog, start.session);
+    }
     scheduleFloatingCompression(start.session.id);
     dialog.querySelector("textarea").focus();
   }
@@ -728,7 +776,7 @@
     return dialog;
   }
 
-  async function sendFloatingChatPrompt(dialog, source, prompt) {
+  async function sendFloatingChatPrompt(dialog, source, prompt, selectionAction = "") {
     const sessionId = dialog.dataset.sessionId;
     if (!sessionId) {
       addFloatingChatMessage(dialog, "error", "浮窗会话尚未初始化。");
@@ -738,14 +786,15 @@
     const pending = addFloatingChatMessage(dialog, "assistant", "正在思考...");
     setFloatingChatBusy(dialog, true);
     try {
-      const response = await chrome.runtime.sendMessage({
+      const response = await sendRuntimeMessage({
         type: "FLOATING_CHAT_MESSAGE",
         sessionId,
         pageUrl: location.href,
         pageTitle: document.title,
         source: serializeFloatingSource(source),
-        prompt
-      });
+        prompt,
+        selectionAction
+      }, { ok: false, error: REFRESH_PAGE_MESSAGE });
       if (!response?.ok) {
         throw new Error(response?.error || "请求失败");
       }
@@ -798,7 +847,7 @@
     if (!sessionId) return;
     window.clearTimeout(floatingCompressionTimers.get(sessionId));
     floatingCompressionTimers.set(sessionId, window.setTimeout(() => {
-      chrome.runtime.sendMessage({ type: "FLOATING_CHAT_COMPRESS", sessionId }).catch(() => {});
+      void sendRuntimeMessage({ type: "FLOATING_CHAT_COMPRESS", sessionId });
       floatingCompressionTimers.delete(sessionId);
     }, FLOATING_CHAT_IDLE_MS));
   }
@@ -913,7 +962,7 @@
     document.addEventListener("mousemove", handlePickerMove, true);
     document.addEventListener("click", handlePickerClick, true);
     document.addEventListener("keydown", handlePickerKeydown, true);
-    chrome.runtime.sendMessage({ type: "REGION_PICK_STARTED" });
+    void sendRuntimeMessage({ type: "REGION_PICK_STARTED" });
   }
 
   function stopElementPicker() {
@@ -946,7 +995,7 @@
     if (event.key === "Escape") {
       event.preventDefault();
       stopElementPicker();
-      chrome.runtime.sendMessage({ type: "REGION_PICK_CANCELLED" });
+      void sendRuntimeMessage({ type: "REGION_PICK_CANCELLED" });
     }
   }
 
@@ -973,12 +1022,12 @@
       label: buildElementLabel(node),
       text
     };
-    chrome.runtime.sendMessage({ type: "REGION_SELECTED", region: getSelectedRegionSnapshot() });
+    void sendRuntimeMessage({ type: "REGION_SELECTED", region: getSelectedRegionSnapshot() });
   }
 
   function clearSelectedRegion() {
     clearSelectedRegionMarker();
-    chrome.runtime.sendMessage({ type: "REGION_CLEARED" });
+    void sendRuntimeMessage({ type: "REGION_CLEARED" });
   }
 
   function clearSelectedRegionMarker() {

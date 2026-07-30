@@ -10,6 +10,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   ttsVoice: "alloy",
   ttsSpeed: 1,
   ttsTimeoutSeconds: 120,
+  localAsrEnabled: false,
+  localAsrToken: "",
   providerPreset: "custom",
   supportsVision: false,
   modelInstances: [],

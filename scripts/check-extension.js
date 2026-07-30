@@ -57,8 +57,35 @@ if (backgroundSource.includes("captureVisibleTab") || contentSource.includes("ca
   errors.push("Visible-tab capture must remain inside the side panel extension page");
 }
 
-if (!contentSource.includes("if (!event.isTrusted) return;")) {
-  errors.push("Injected quick actions must reject synthetic clicks");
+const unsafeContentChromeCalls = contentSource.match(/chrome\.(?:runtime\.sendMessage|storage\.local\.(?:get|set))\(/g) || [];
+if (unsafeContentChromeCalls.length !== 3 || !contentSource.includes("function sendRuntimeMessage(") || !contentSource.includes("function getLocalStorage(") || !contentSource.includes("function setLocalStorage(")) {
+  errors.push("Content-script runtime and storage calls must use the invalidation-safe helpers");
+}
+
+const selectionToolbarHandler = contentSource.match(/toolbar\.addEventListener\("click", \(event\) => \{([\s\S]*?)\n\s*\}\);/);
+if (!selectionToolbarHandler?.[1].includes("if (!event.isTrusted) return;")) {
+  errors.push("Selection toolbar must reject synthetic clicks before acting on buttons");
+}
+
+if (!selectionToolbarHandler?.[1].includes("openFloatingChatFromSelection({") || !contentSource.includes("selectionAction")) {
+  errors.push("Selection toolbar actions must start floating-chat requests");
+}
+
+if (!backgroundSource.includes("buildSelectionPrompt(selectionAction, selectionText, currentSettings)")) {
+  errors.push("Floating selection actions must use the current selection prompt settings");
+}
+
+const floatingMessageHandler = backgroundSource.match(/async function handleFloatingChatMessage\(message, sender\) \{([\s\S]*?)\n\}/);
+const floatingHandlerSource = floatingMessageHandler?.[1] || "";
+if (floatingHandlerSource.indexOf("Unknown selection action") > floatingHandlerSource.indexOf("requestChat(") || floatingHandlerSource.indexOf("Unknown selection action") < 0) {
+  errors.push("Floating chat must validate unknown selection actions before provider use");
+}
+const buildMessageIndex = floatingHandlerSource.indexOf("buildFloatingUserMessage(");
+const userAppendIndex = floatingHandlerSource.indexOf('appendFloatingMessage(session, { role: "user"');
+const firstSaveIndex = floatingHandlerSource.indexOf("await saveFloatingSession(session);");
+const requestChatIndex = floatingHandlerSource.indexOf("requestChat(");
+if (buildMessageIndex < 0 || userAppendIndex < 0 || firstSaveIndex < 0 || requestChatIndex < 0 || buildMessageIndex > userAppendIndex || userAppendIndex > firstSaveIndex || firstSaveIndex > requestChatIndex) {
+  errors.push("Floating chat must build from the prior session, then save the user turn before provider use");
 }
 
 if (!sidePanelSource.includes("chrome.tabs.captureVisibleTab")) {
@@ -71,6 +98,17 @@ if (/from\s+["']\.\.\/shared\/pageRecipes\.js["']/.test(sidePanelSource) || /\br
 
 if (sidePanelSource.includes("本次将按普通聊天发送")) {
   errors.push("Page-read failures must not downgrade to ordinary chat");
+}
+
+if (!sidePanelSource.includes("linkifyVideoTimestamps(fullText, videoTimestampUrl)") || !sidePanelSource.includes("parseVideoTimestampLink(`${anchor.textContent}(${anchor.href})`)") || !sidePanelSource.includes("handleVideoTimestampClick") || !sidePanelSource.includes("chrome.scripting.executeScript") || !sidePanelSource.includes("video.currentTime = seconds")) {
+  errors.push("Timed video summaries must persist timestamp links and seek with a bounded main-world script");
+}
+
+const renderHistorySource = sidePanelSource.match(/async function renderHistory\(\) \{([\s\S]*?)\n\}\n\nfunction showFloatingHistory/);
+const floatingHistoryHandler = renderHistorySource?.[1].match(/button\.addEventListener\("click", \(\) => \{([\s\S]*?)\n\s*\}\);/);
+const floatingHistorySource = floatingHistoryHandler?.[1] || "";
+if (floatingHistorySource.indexOf("showFloatingHistory(conversation);") < 0 || floatingHistorySource.indexOf("return;") < floatingHistorySource.indexOf("showFloatingHistory(conversation);") || floatingHistorySource.indexOf("return;") > floatingHistorySource.indexOf("state.messages = conversation.messages")) {
+  errors.push("Floating history clicks must return before ordinary conversation state assignment");
 }
 
 if (!manifest.commands?.["open-assistant"] || !manifest.commands?.["summarize-page"]) {

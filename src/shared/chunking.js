@@ -1,7 +1,16 @@
 import { normalizeWhitespace } from "./text.js";
 import { buildPageContext } from "./pageTypes.js";
+import { MAX_PAGE_CHARS } from "./defaults.js";
+
+const TIMED_EVIDENCE_NOTICE = "\n\n时间戳要求：对来自带时间戳视频证据的关键主张，保留其原始精确时间戳，格式为 [MM:SS] 或 [HH:MM:SS]。不要编造、猜测或改写时间戳。";
+const timedEvidenceNotice = (page) => page?.evidence?.timed ? TIMED_EVIDENCE_NOTICE : "";
+
+export function getEffectivePageChunkChars(maxChars = 12000) {
+  return Math.min(maxChars, MAX_PAGE_CHARS);
+}
 
 export function splitTextIntoChunks(text, maxChars = 12000) {
+  maxChars = getEffectivePageChunkChars(maxChars);
   const normalized = normalizeWhitespace(text);
   if (!normalized) return [];
   if (normalized.length <= maxChars) return [normalized];
@@ -46,8 +55,12 @@ export function buildChunkSummaryPrompts(page, maxChars = 12000) {
 网页标题：${page.title || "无标题"}
 网页 URL：${page.url || "未知"}
 分块内容：
-${chunk}`
+${chunk}${timedEvidenceNotice(page)}`
   }));
+}
+
+export function getPageSummaryText(page) {
+  return buildPageContext(page);
 }
 
 export function buildFinalSummaryPrompt(page, partialSummaries) {
@@ -61,7 +74,7 @@ export function buildFinalSummaryPrompt(page, partialSummaries) {
 网页标题：${page.title || "无标题"}
 网页 URL：${page.url || "未知"}
 分块摘要：
-${partialSummaries.map((summary, index) => `## 分块 ${index + 1}\n${summary}`).join("\n\n")}`;
+${partialSummaries.map((summary, index) => `## 分块 ${index + 1}\n${summary}`).join("\n\n")}${timedEvidenceNotice(page)}`;
 }
 
 function splitLongParagraph(paragraph, maxChars) {

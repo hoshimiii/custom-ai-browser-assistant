@@ -39,6 +39,13 @@ export function upsertFloatingSession(sessions, session) {
     .slice(0, FLOATING_SESSION_LIMIT);
 }
 
+export function mergeConversationHistory(history, floatingSessions) {
+  return [
+    ...(history || []).map((conversation) => ({ kind: "conversation", record: conversation })),
+    ...(floatingSessions || []).map((session) => ({ kind: "floating", record: session }))
+  ].sort((a, b) => latestConversationTime(b.record) - latestConversationTime(a.record));
+}
+
 export function appendFloatingMessage(session, message, now = Date.now()) {
   return {
     ...session,
@@ -132,4 +139,8 @@ function truncateFloatingText(text) {
   const normalized = String(text || "").replace(/\s+/g, " ").trim();
   if (normalized.length <= FLOATING_CONTEXT_CHARS) return normalized;
   return `${normalized.slice(0, FLOATING_CONTEXT_CHARS)}\n\n[已截断 ${normalized.length - FLOATING_CONTEXT_CHARS} 字符]`;
+}
+
+function latestConversationTime(record) {
+  return Number(record?.updatedAt || record?.createdAt || 0);
 }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getSettings, saveConversation, savePageRecipe, findStoredPageRecipe, deletePageRecipe } from "../src/shared/storage.js";
+import { clearHistory, getSettings, saveConversation, savePageRecipe, findStoredPageRecipe, deletePageRecipe } from "../src/shared/storage.js";
 
 test("saveConversation updates one active history record across turns", async () => {
   const storage = { history: [] };
@@ -36,6 +36,19 @@ test("saveConversation updates one active history record across turns", async ()
     assert.equal(storage.history.length, 1);
     assert.equal(storage.history[0].messages.length, 3);
     assert.equal(storage.history[0].createdAt, conversation.createdAt);
+  } finally {
+    globalThis.chrome = previousChrome;
+  }
+});
+
+test("clearHistory clears ordinary and floating records", async () => {
+  const storage = { history: [{ id: "history" }], floatingSessions: [{ id: "floating" }] };
+  const previousChrome = globalThis.chrome;
+  globalThis.chrome = { storage: { local: { async set(next) { Object.assign(storage, next); } } } };
+  try {
+    await clearHistory();
+    assert.deepEqual(storage.history, []);
+    assert.deepEqual(storage.floatingSessions, []);
   } finally {
     globalThis.chrome = previousChrome;
   }
