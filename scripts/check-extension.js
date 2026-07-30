@@ -104,8 +104,8 @@ if (!sidePanelSource.includes("linkifyVideoTimestamps(fullText, videoTimestampUr
   errors.push("Timed video summaries must persist timestamp links and seek with a bounded main-world script");
 }
 
-const renderHistorySource = sidePanelSource.match(/async function renderHistory\(\) \{([\s\S]*?)\n\}\n\nfunction showFloatingHistory/);
-const floatingHistoryHandler = renderHistorySource?.[1].match(/button\.addEventListener\("click", \(\) => \{([\s\S]*?)\n\s*\}\);/);
+const renderHistorySource = sidePanelSource.match(/async function renderHistory\(\) \{([\s\S]*?)\r?\n\}\r?\n\r?\nfunction showFloatingHistory/);
+const floatingHistoryHandler = renderHistorySource?.[1].match(/button\.addEventListener\("click", \(\) => \{([\s\S]*?)\r?\n\s*\}\);/);
 const floatingHistorySource = floatingHistoryHandler?.[1] || "";
 if (floatingHistorySource.indexOf("showFloatingHistory(conversation);") < 0 || floatingHistorySource.indexOf("return;") < floatingHistorySource.indexOf("showFloatingHistory(conversation);") || floatingHistorySource.indexOf("return;") > floatingHistorySource.indexOf("state.messages = conversation.messages")) {
   errors.push("Floating history clicks must return before ordinary conversation state assignment");
