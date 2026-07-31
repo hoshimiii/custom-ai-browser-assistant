@@ -34,6 +34,9 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - Screenshot Q&A with automatic visible-tab capture and side panel preview for vision-capable OpenAI-compatible models.
 - Screenshot Q&A can also start directly from the in-page quick rail and opens near the trigger position.
 - Screenshot paths are blocked for an instance without explicit vision capability. TTS remains global, and blank TTS URL/key inherit the selected chat instance.
+- The side-panel `网页代码` tag explicitly attaches a bounded sanitized DOM snapshot for questions. `允许页面操作` asks the model for fixed structured operations, never arbitrary JavaScript; foreground actions require a visible confirmation, while background tasks require a second confirmation and always provide a manual Stop control.
+- Page-operation tasks stay pinned to their original tab and document. Same-origin tab tasks may resume after navigation during the current browser session; cross-origin changes pause them, and browser restarts clear them. Task definitions are session-only and are not included in backups.
+- Side-panel and floating chat send with Enter and add a newline with Shift+Enter; Chinese, Japanese, and Korean IME composition Enter keys are not sent.
 - The first page-grounded operation for a site/page type can make one non-streaming planning request with bounded local candidate labels/previews. The model returns only candidate IDs; selectors are generated and validated locally, then reused as a recipe or replanned if stale.
 
 ## Install Locally

@@ -4,6 +4,7 @@ import { getFloatingSessions, getFloatingSessionsForPage, getSettings, saveFloat
 import { resolveModelInstance } from "./shared/modelInstances.js";
 import { SELECTION_ACTIONS } from "./shared/actions.js";
 import { buildSelectionPrompt } from "./shared/prompts.js";
+import { classifyTaskDocument, normalizeBackgroundTask } from "./shared/pageAgent.js";
 
 const CONTEXT_ACTIONS = [
   { id: "explain", title: "Explain with AI" },
@@ -11,6 +12,22 @@ const CONTEXT_ACTIONS = [
   { id: "summarize", title: "Summarize with AI" },
   { id: "rewrite", title: "Rewrite with AI" }
 ];
+
+const PAGE_AGENT_TASKS_KEY = "pageAgentTasks";
+const MAX_PAGE_AGENT_TASKS = 20;
+let pageAgentTaskQueue = Promise.resolve();
+
+queuePageAgentTask(async () => {
+  await updatePageAgentBadge(await getPageAgentTasks());
+}).catch(() => {});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  stopPageAgentTasksForTab(tabId).catch(() => {});
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.url) updatePageAgentTasksForNavigation(tabId, changeInfo.url).catch(() => {});
+});
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
@@ -68,6 +85,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function handleMessage(message, sender) {
+  if (message?.type === "PAGE_TASK_DOCUMENT_READY") {
+    return handlePageTaskDocumentReady(message, sender);
+  }
+
+  if (message?.type === "PAGE_TASK_TICK") {
+    return handlePageTaskTick(message, sender);
+  }
+
+  if (message?.type === "PAGE_TASK_RESULT") {
+    return handlePageTaskResult(message, sender);
+  }
+
+  if (!sender.tab && message?.type === "GET_PAGE_TASKS") {
+    return { ok: true, tasks: await queuePageAgentTask(getPageAgentTasks) };
+  }
+
+  if (!sender.tab && message?.type === "CREATE_PAGE_TASK") {
+    return createPageAgentTask(message);
+  }
+
+  if (!sender.tab && message?.type === "STOP_PAGE_TASK") {
+    await stopPageAgentTask(message.taskId);
+    return { ok: true };
+  }
+
+  if (!sender.tab && message?.type === "STOP_PAGE_TASKS_FOR_TAB") {
+    await stopPageAgentTasksForTab(message.tabId);
+    return { ok: true };
+  }
+
   if (message?.type === "GET_SETTINGS_STATUS") {
     const settings = await getDefaultRequestSettings();
     return {
@@ -136,6 +183,222 @@ async function handleMessage(message, sender) {
   }
 
   return { ok: false, error: "Unknown message" };
+}
+
+function isTopFrameSender(sender) {
+  return Number.isInteger(sender.tab?.id) && sender.frameId === 0;
+}
+
+function senderPage(sender) {
+  if (!isTopFrameSender(sender)) return null;
+  try {
+    const url = new URL(sender.tab.url);
+    return url.protocol === "http:" || url.protocol === "https:" ? { tabId: sender.tab.id, url: url.href, origin: url.origin, title: String(sender.tab.title || "").slice(0, 300) } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function handlePageTaskDocumentReady(message, sender) {
+  const page = senderPage(sender);
+  const documentToken = typeof message.documentToken === "string" ? message.documentToken : "";
+  if (!page || !documentToken) return { ok: false, error: "Invalid page task sender" };
+
+  return queuePageAgentTask(async () => {
+    const tasks = await getPageAgentTasks();
+    const now = Date.now();
+    let changed = false;
+    const next = [];
+    for (const task of tasks) {
+      const status = classifyTaskDocument(task, { tabId: page.tabId, url: page.url, documentToken });
+      if (task.tabId === page.tabId && task.scope === "document" && status === "expired") {
+        changed = true;
+        continue;
+      }
+      if (task.tabId === page.tabId && task.scope === "tab") {
+        if (status === "active") {
+          const rebound = normalizeBackgroundTask({ ...task, documentToken, url: page.url, origin: page.origin, title: page.title, state: "active", updatedAt: now });
+          if (JSON.stringify(rebound) !== JSON.stringify(task)) changed = true;
+          next.push(rebound);
+          continue;
+        }
+        if (status === "paused" && task.state !== "paused") {
+          next.push(normalizeBackgroundTask({ ...task, state: "paused", updatedAt: now }));
+          changed = true;
+          continue;
+        }
+      }
+      next.push(task);
+    }
+    if (changed) await savePageAgentTasks(next);
+    return { ok: true, tasks: next.filter((task) => task.state === "active" && classifyTaskDocument(task, { tabId: page.tabId, url: page.url, documentToken }) === "active") };
+  });
+}
+
+async function handlePageTaskTick(message, sender) {
+  const page = senderPage(sender);
+  if (!page) return { ok: false, error: "Invalid page task sender" };
+  return queuePageAgentTask(async () => {
+    const task = (await getPageAgentTasks()).find((item) => item.id === message.taskId);
+    if (!isCurrentPageTask(task, message, page)) return { ok: false, error: "Stale page task" };
+    return { ok: true, task };
+  });
+}
+
+async function handlePageTaskResult(message, sender) {
+  const page = senderPage(sender);
+  if (!page) return { ok: false, error: "Invalid page task sender" };
+  return queuePageAgentTask(async () => {
+    const tasks = await getPageAgentTasks();
+    const index = tasks.findIndex((item) => item.id === message.taskId);
+    if (index < 0 || !isCurrentPageTask(tasks[index], message, page)) return { ok: false, error: "Stale page task" };
+    const error = message.error === undefined || message.error === null ? null : message.error;
+    const updated = normalizeBackgroundTask({ ...tasks[index], lastRunAt: Date.now(), updatedAt: Date.now(), lastError: error });
+    tasks[index] = updated;
+    await savePageAgentTasks(tasks);
+    return { ok: true, task: updated };
+  });
+}
+
+function isCurrentPageTask(task, message, page) {
+  return task?.state === "active" && task.tabId === page.tabId && task.origin === page.origin && task.id === message.taskId && task.nonce === message.nonce && task.documentToken === message.documentToken && (task.scope !== "document" || task.url === page.url);
+}
+
+async function createPageAgentTask(message) {
+  const target = message.target || {};
+  const plan = message.plan || {};
+  if (!Number.isInteger(target.tabId) || target.tabId < 1 || typeof target.url !== "string" || typeof target.documentToken !== "string" || !target.documentToken) {
+    return { ok: false, error: "Invalid page task target" };
+  }
+  let targetUrl;
+  try {
+    targetUrl = new URL(target.url);
+    if (targetUrl.protocol !== "http:" && targetUrl.protocol !== "https:") throw new TypeError();
+  } catch {
+    return { ok: false, error: "Invalid page task target" };
+  }
+  let tab;
+  try {
+    tab = await chrome.tabs.get(target.tabId);
+    if (new URL(tab.url).href !== targetUrl.href) return { ok: false, error: "Page task target changed" };
+    const verified = await chrome.tabs.sendMessage(target.tabId, { type: "VERIFY_PAGE_TASK_TARGET", url: targetUrl.href, documentToken: target.documentToken }, { frameId: 0 });
+    if (!verified?.ok) return { ok: false, error: "Page task target changed" };
+  } catch {
+    return { ok: false, error: "Page task target unavailable" };
+  }
+
+  let task;
+  try {
+    const now = Date.now();
+    task = normalizeBackgroundTask({
+      id: crypto.randomUUID(), nonce: crypto.randomUUID(), documentToken: target.documentToken, rootId: target.rootId ?? null, tabId: target.tabId,
+      url: targetUrl.href, origin: targetUrl.origin, title: String(tab.title || "").slice(0, 300), summary: plan.message,
+      scope: plan.scope, intervalSeconds: plan.intervalSeconds, actions: plan.actions, state: "active",
+      createdAt: now, updatedAt: now, lastRunAt: null, lastError: null
+    });
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+
+  let startError = null;
+  let capacityReached = false;
+  await queuePageAgentTask(async () => {
+    const tasks = await getPageAgentTasks();
+    if (tasks.length >= MAX_PAGE_AGENT_TASKS) {
+      capacityReached = true;
+      return;
+    }
+    tasks.push(task);
+    await savePageAgentTasks(tasks);
+    try {
+      const started = await chrome.tabs.sendMessage(task.tabId, { type: "START_PAGE_TASK", task }, { frameId: 0 });
+      if (!started?.ok) throw new Error("Page task start rejected");
+    } catch (error) {
+      startError = error;
+      await savePageAgentTasks(tasks.filter((item) => item.id !== task.id));
+    }
+  });
+  if (capacityReached) return { ok: false, error: "Page task limit reached" };
+  if (startError) return { ok: false, error: startError.message || "Page task start failed" };
+  return { ok: true, task };
+}
+
+async function stopPageAgentTask(taskId) {
+  const removed = await removePageAgentTasks((task) => task.id === taskId);
+  await Promise.all(removed.map((task) => sendPageTaskStop(task)));
+}
+
+async function stopPageAgentTasksForTab(tabId) {
+  if (!Number.isInteger(tabId)) return;
+  const removed = await removePageAgentTasks((task) => task.tabId === tabId);
+  await Promise.all(removed.map((task) => sendPageTaskStop(task)));
+}
+
+async function sendPageTaskStop(task) {
+  try {
+    await chrome.tabs.sendMessage(task.tabId, { type: "STOP_PAGE_TASK", taskId: task.id, nonce: task.nonce }, { frameId: 0 });
+  } catch {}
+}
+
+async function updatePageAgentTasksForNavigation(tabId, url) {
+  let page;
+  try { page = new URL(url); } catch { return; }
+  await queuePageAgentTask(async () => {
+    const tasks = await getPageAgentTasks();
+    let changed = false;
+    const now = Date.now();
+    const next = tasks.flatMap((task) => {
+      if (task.tabId !== tabId) return [task];
+      if (task.scope === "document") {
+        if (task.url === page.href) return [task];
+        changed = true;
+        return [];
+      }
+      if (task.origin !== page.origin) {
+        if (task.state === "paused") return [task];
+        changed = true;
+        return [normalizeBackgroundTask({ ...task, state: "paused", updatedAt: now })];
+      }
+      const rebound = normalizeBackgroundTask({ ...task, url: page.href, origin: page.origin, state: "active", updatedAt: now });
+      if (JSON.stringify(rebound) !== JSON.stringify(task)) changed = true;
+      return [rebound];
+    });
+    if (changed) await savePageAgentTasks(next);
+  });
+}
+
+function queuePageAgentTask(work) {
+  const next = pageAgentTaskQueue.then(work, work);
+  pageAgentTaskQueue = next.catch(() => {});
+  return next;
+}
+
+async function getPageAgentTasks() {
+  const stored = await chrome.storage.session.get(PAGE_AGENT_TASKS_KEY);
+  if (!Array.isArray(stored[PAGE_AGENT_TASKS_KEY])) return [];
+  return stored[PAGE_AGENT_TASKS_KEY].flatMap((task) => {
+    try { return [normalizeBackgroundTask(task)]; } catch { return []; }
+  });
+}
+
+async function savePageAgentTasks(tasks) {
+  await chrome.storage.session.set({ [PAGE_AGENT_TASKS_KEY]: tasks });
+  await updatePageAgentBadge(tasks);
+  try { await chrome.runtime.sendMessage({ type: "PAGE_TASKS_CHANGED" }); } catch {}
+}
+
+async function removePageAgentTasks(predicate) {
+  return queuePageAgentTask(async () => {
+    const tasks = await getPageAgentTasks();
+    const removed = tasks.filter(predicate);
+    if (removed.length) await savePageAgentTasks(tasks.filter((task) => !predicate(task)));
+    return removed;
+  });
+}
+
+async function updatePageAgentBadge(tasks) {
+  const count = tasks.filter((task) => task.state === "active" || task.state === "paused").length;
+  try { await chrome.action.setBadgeText({ text: count ? String(count) : "" }); } catch {}
 }
 
 async function handleFloatingChatMessage(message, sender) {

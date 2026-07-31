@@ -26,6 +26,10 @@ This project aims to cover the most common Monica-like browser assistant workflo
 | Provider presets | Implemented | OpenAI, OpenRouter, Ollama, LM Studio, One API/New API, custom. |
 | YouTube/Bilibili extraction | Implemented | Summaries first fetch complete platform subtitles when available; otherwise, an explicitly enabled, token-authenticated loopback helper uploads bounded sequential audio chunks to Cloudflare Workers AI Whisper Large V3 Turbo for supported URLs. Bilibili AI conclusion remains deferred because it requires SESSDATA/WBI and may enqueue generation. |
 | Page recipe planning | Implemented | A first user-triggered page-grounded operation may make one non-streaming planning call with bounded local candidate labels/previews. Only returned candidate IDs are accepted; selectors/signatures are generated and validated locally, and stale recipes fall back or replan. |
+| Explicit page code context | Implemented | `网页代码` attaches a bounded sanitized DOM snapshot only on request. |
+| Confirmed structured page operations | Implemented | `允许页面操作` proposes fixed validated actions; foreground writes require an explicit confirmation and never evaluate model-authored JavaScript. |
+| Session-only background page tasks | Implemented | A second confirmation creates a pinned document/tab task in `chrome.storage.session`; tasks expose Stop, pause on cross-origin navigation, and do not resume after browser restart. |
+| IME-safe Enter send | Implemented | Side-panel and floating chat send on Enter, retain Shift+Enter newlines, and ignore composition confirmation keys. |
 | PDF detection | Partial | Detects PDF pages and provides a graceful fallback until a dedicated parser is added. |
 | Knowledge base | Planned | IndexedDB storage and retrieval layer. |
 | Image/video generation | Out of scope for MVP | Can be added through provider-specific tools later. |
@@ -45,6 +49,8 @@ The extension is split into browser-facing modules and pure shared modules:
 - `test/*`: Node tests for pure logic.
 
 The shared modules are intentionally independent from Chrome APIs where possible so they can be tested with Node.
+
+Live Chrome confirmation is still required for IME behavior, target/document lifecycle, same-origin task resume, and Stop delivery in a real browser.
 
 ## Quality Gates
 

@@ -103,9 +103,19 @@
       <main id="messages" class="messages" aria-live="polite"></main>
     </div>
 
+    <section id="pageTaskPanel" class="page-task-panel" aria-label="后台任务" hidden>
+      <div class="page-task-header">
+        <strong>后台任务</strong>
+        <span id="pageTaskCount">0</span>
+      </div>
+      <div id="pageTaskList" class="page-task-list"></div>
+    </section>
+
     <form id="composer" class="composer">
       <div id="contextTagRow" class="context-tag-row" hidden>
         <button id="contextTag" class="context-tag" type="button" aria-pressed="false"></button>
+        <button id="pageCodeTag" class="context-tag" type="button" aria-pressed="false">网页代码</button>
+        <button id="pageActionTag" class="context-tag" type="button" aria-pressed="false">允许页面操作</button>
       </div>
       <textarea id="promptInput" rows="3" placeholder="输入问题，网页内容可按需附加"></textarea>
       <div class="composer-actions">
@@ -128,6 +138,22 @@
         <button id="closeFloatingHistory" type="button">关闭</button>
       </div>
       <div id="floatingHistoryContent" class="floating-history-content"></div>
+    </dialog>
+
+    <dialog id="pageTaskDialog" class="page-task-dialog" aria-labelledby="pageTaskDialogTitle">
+      <h2 id="pageTaskDialogTitle">确认后台任务</h2>
+      <p id="pageTaskTarget"></p>
+      <p id="pageTaskSummary"></p>
+      <pre id="pageTaskActions" class="page-task-actions"></pre>
+      <p id="pageTaskEffects"></p>
+      <p id="pageTaskInterval"></p>
+      <label class="page-task-scope-label">运行范围
+        <select id="pageTaskScope" aria-label="后台任务运行范围"></select>
+      </label>
+      <div class="dialog-actions">
+        <button id="cancelPageTask" type="button">取消</button>
+        <button id="confirmPageTask" class="primary-button" type="button">确认并启动后台任务</button>
+      </div>
     </dialog>
 
     <script type="module" src="sidepanel.js"></script>

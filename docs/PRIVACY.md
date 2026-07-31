@@ -24,6 +24,7 @@ Depending on the user action, the request may include:
 - Saved-page library snapshots when the user asks questions against saved content.
 - Current page or selected-region text when the user explicitly starts TTS playback.
 - On the first user-triggered page-grounded operation for an origin, page type, and operation without a usable local recipe, bounded local candidate labels and previews for that action. The selected configured model receives one non-streaming planning request and can return only candidate IDs.
+- A bounded sanitized DOM snapshot only when the user explicitly attaches `网页代码` or asks for allowed page operations. It excludes sensitive form values and inline script/style bodies; the configured model receives it only for that explicit question or operation request.
 
 No page content is sent automatically on page load. User action is required. Side-panel questions can include current-page, selected-region, selected-text, or explicit screenshot context; floating-chat questions can include current-page or selected-text context. TTS text is sent only when the user clicks the read control, and only to the configured TTS endpoint. Blank TTS URL and key inherit the selected chat instance for that request.
 
@@ -39,6 +40,8 @@ The extension stores the following data in `chrome.storage.local`:
 - Page recipes keyed by origin, page type, and operation. A recipe contains only locally validated selector signatures and timestamps; it does not contain page text, DOM snapshots, raw planner output, or model-authored selectors.
 
 Users can export or import this data from the options page. Backups include model instances and page recipes, but do not include any API keys or loopback-helper token by default; exporting those values requires the explicit include-keys opt-in. Generated TTS audio and its source text are ephemeral: they are not stored in conversation history or backups. Users can also clear stored conversation history and delete saved pages from the side panel.
+
+Confirmed background page-task definitions use `chrome.storage.session`, not `chrome.storage.local`, and are never included in backups. They disappear when Chrome restarts. Page writes from a confirmed plan occur only in the pinned target page; the feature has no arbitrary JavaScript execution, `chrome.debugger`, cookie access, or browser credential access.
 
 ## Permissions
 

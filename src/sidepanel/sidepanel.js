@@ -4,6 +4,7 @@ import { buildChunkSummaryPrompts, buildFinalSummaryPrompt, getEffectivePageChun
 import { DEFAULT_SETTINGS, MESSAGE_LIMIT } from "../shared/defaults.js";
 import { buildSavedPageQuestionPrompt, searchSavedPages } from "../shared/library.js";
 import { buildPageIdentity, createSelectedRegionPageSnapshot, resolveSelectedRegionPageSnapshot } from "../shared/pageTypes.js";
+import { buildPageAgentPrompt, buildPageCodeQuestionPrompt, parsePageAgentResponse } from "../shared/pageAgent.js";
 import { buildPageQuestionPrompt, buildPageSummaryPrompt, buildSearchPrompt, buildSelectionPrompt, buildWritingPrompt } from "../shared/prompts.js";
 import { describeEvidence, fetchPlatformSubtitle, replaceWithLocalAsr, replaceWithPlatformSubtitle } from "../shared/platformSubtitles.js";
 import { transcribeWithLocalAsr } from "../shared/localAsr.js";
@@ -28,6 +29,12 @@ const state = {
   regionEventToken: 0,
   contextRevision: 0,
   contextOptIn: false,
+  pageCodeOptIn: false,
+  pageActionsOptIn: false,
+  pageTasks: [],
+  pendingPageTaskConfirmation: null,
+  pageAgentRequest: false,
+  promptComposing: false,
   conversationId: null,
   conversationCreatedAt: null,
   pendingScreenshot: null,
@@ -49,6 +56,20 @@ const elements = {
   promptInput: document.getElementById("promptInput"),
   contextTagRow: document.getElementById("contextTagRow"),
   contextTag: document.getElementById("contextTag"),
+  pageCodeTag: document.getElementById("pageCodeTag"),
+  pageActionTag: document.getElementById("pageActionTag"),
+  pageTaskPanel: document.getElementById("pageTaskPanel"),
+  pageTaskCount: document.getElementById("pageTaskCount"),
+  pageTaskList: document.getElementById("pageTaskList"),
+  pageTaskDialog: document.getElementById("pageTaskDialog"),
+  pageTaskTarget: document.getElementById("pageTaskTarget"),
+  pageTaskSummary: document.getElementById("pageTaskSummary"),
+  pageTaskActions: document.getElementById("pageTaskActions"),
+  pageTaskEffects: document.getElementById("pageTaskEffects"),
+  pageTaskInterval: document.getElementById("pageTaskInterval"),
+  pageTaskScope: document.getElementById("pageTaskScope"),
+  cancelPageTask: document.getElementById("cancelPageTask"),
+  confirmPageTask: document.getElementById("confirmPageTask"),
   openOptions: document.getElementById("openOptions"),
   pageActions: document.getElementById("pageActions"),
   writingActions: document.getElementById("writingActions"),
@@ -96,6 +117,7 @@ async function init() {
   await renderHistory();
   await renderLibrary();
   await refreshContextStatus();
+  await renderPageTasks();
   await consumePendingAction();
   addMessage("assistant", "配置 API 后即可开始使用。直接输入问题即可聊天；需要网页内容时，点选输入框上方的页面标签。");
 }
@@ -126,6 +148,23 @@ function wireEvents() {
     if (state.running || !isReadableContext()) return;
     state.contextOptIn = !state.contextOptIn;
     updateContextLabel();
+  });
+  elements.pageCodeTag.addEventListener("click", () => {
+    if (state.running || !isPageAgentAvailable()) return;
+    state.pageCodeOptIn = !state.pageCodeOptIn;
+    updateContextLabel();
+  });
+  elements.pageActionTag.addEventListener("click", togglePageActionsOptIn);
+  elements.promptInput.addEventListener("compositionstart", () => {
+    state.promptComposing = true;
+  });
+  elements.promptInput.addEventListener("compositionend", () => {
+    state.promptComposing = false;
+  });
+  elements.promptInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229 || state.promptComposing) return;
+    event.preventDefault();
+    elements.composer.requestSubmit();
   });
   elements.summarizePage.addEventListener("click", () => runPageAction("summary"));
   elements.readPage.addEventListener("click", readCurrentPage);
@@ -164,6 +203,11 @@ function wireEvents() {
   elements.stopTts.addEventListener("click", stopTts);
   elements.ttsAudio.addEventListener("play", handleTtsAudioPlay);
   elements.ttsAudio.addEventListener("ended", playNextTtsChunk);
+  elements.cancelPageTask.addEventListener("click", closePageTaskDialog);
+  elements.pageTaskDialog.addEventListener("cancel", () => {
+    state.pendingPageTaskConfirmation = null;
+  });
+  elements.confirmPageTask.addEventListener("click", confirmPageTask);
   chrome.runtime.onMessage.addListener((message, sender) => {
     if (message?.type === "SELECTION_ACTION") {
       runSelectionAction(message.action, message.selectionText, message.tabId, message.frameId);
@@ -182,6 +226,9 @@ function wireEvents() {
     }
     if (message?.type === "REGION_CLEARED") {
       handleRegionCleared(sender);
+    }
+    if (message?.type === "PAGE_TASKS_CHANGED") {
+      void renderPageTasks();
     }
   });
   chrome.tabs?.onActivated?.addListener(() => refreshContextStatus());
@@ -267,6 +314,14 @@ function restartForContextChange() {
 
 async function sendUserPrompt(text) {
   if (!ensureIdle()) return;
+  if (state.pageActionsOptIn) {
+    await runPageAgentRequest(text);
+    return;
+  }
+  if (state.pageCodeOptIn) {
+    await runPageCodeQuestion(text);
+    return;
+  }
   if (!state.contextOptIn) {
     addMessage("user", text);
     await askModel([{ role: "user", content: text }]);
@@ -288,6 +343,255 @@ async function sendUserPrompt(text) {
   updateContextLabel();
   addMessage("user", text);
   await askModel([{ role: "user", content: text }]);
+}
+
+async function runPageCodeQuestion(question) {
+  if (!beginTask()) return;
+  const abortController = new AbortController();
+  state.abort = () => abortController.abort();
+  state.pageAgentRequest = true;
+  try {
+    const target = await capturePageAgentTarget({ includePageText: state.contextOptIn });
+    showTruncatedPageCodeNotice(target);
+    addMessage("user", `基于网页代码提问：${question}`);
+    await askModelDuringTask(
+      [{ role: "user", content: buildPageCodeQuestionPrompt({ question, pageCode: target.code, pageText: target.pageText, title: target.title, url: target.url, scope: target.scope }) }],
+      abortController.signal,
+      currentRequestSettings(),
+      { historyMessages: [{ role: "user", content: question }] }
+    );
+  } catch (error) {
+    if (abortController.signal.aborted) addMessage("assistant", "已停止。");
+    else addMessage("error", `网页代码提问失败：${error.message}`);
+  } finally {
+    state.pageAgentRequest = false;
+    endTask();
+  }
+}
+
+async function runPageAgentRequest(question) {
+  if (!beginTask()) return;
+  const abortController = new AbortController();
+  state.abort = () => abortController.abort();
+  state.pageAgentRequest = true;
+  try {
+    const target = await capturePageAgentTarget({ includePageText: state.contextOptIn });
+    showTruncatedPageCodeNotice(target);
+    const settings = currentRequestSettings();
+    addMessage("user", `请求页面操作：${question}`);
+    const raw = await requestChat(settings, buildMessages([
+      { role: "user", content: buildPageAgentPrompt({ question, pageCode: target.code, pageText: target.pageText, title: target.title, url: target.url, scope: target.rootId ? "document" : "tab" }) }
+    ]), { signal: abortController.signal });
+    if (abortController.signal.aborted) throw new Error("已停止");
+    const plan = parsePageAgentResponse(raw);
+    addMessage("assistant", plan.message);
+    await persistPageAgentExchange(question, plan.message);
+    if (plan.mode === "answer") return;
+
+    const preview = await sendPageAgentTargetMessage(target, {
+      type: "PREVIEW_PAGE_ACTIONS", url: target.url, documentToken: target.documentToken, rootId: target.rootId, mode: plan.mode, actions: plan.actions
+    });
+    if (!preview?.ok) {
+      addMessage("error", `页面操作预览失败：${preview?.error || "当前页面已变化"}`);
+      return;
+    }
+    renderPageActionPlan(target, plan, preview.previews || []);
+  } catch (error) {
+    if (abortController.signal.aborted) addMessage("assistant", "已停止。");
+    else addMessage("error", `页面操作请求失败：${error.message}`);
+  } finally {
+    state.pageAgentRequest = false;
+    endTask();
+  }
+}
+
+async function persistPageAgentExchange(question, answer) {
+  state.messages.push({ role: "user", content: question }, { role: "assistant", content: answer });
+  trimMessages();
+  await persist();
+}
+
+async function capturePageAgentTarget({ includePageText = false } = {}) {
+  const tab = await getActiveTab();
+  if (!tab?.id || !isHttpUrl(tab.url)) throw new Error("请在可读取的 http/https 网页上使用页面代码或操作");
+  const initialUrl = tab.url;
+  const response = await chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_PAGE_CODE" }, { frameId: 0 }).catch(() => null);
+  const snapshot = response?.snapshot;
+  const verifiedTab = await chrome.tabs.get(tab.id).catch(() => null);
+  if (!response?.ok || !snapshot?.documentToken || typeof snapshot.code !== "string" || verifiedTab?.url !== initialUrl || snapshot.url !== initialUrl) {
+    throw new Error(response?.error || "页面已切换或无法读取网页代码");
+  }
+  const target = {
+    tabId: tab.id,
+    url: initialUrl,
+    origin: new URL(initialUrl).origin,
+    title: String(snapshot.title || tab.title || "").slice(0, 300),
+    documentToken: snapshot.documentToken,
+    rootId: snapshot.rootId || null,
+    scope: snapshot.scope || "page",
+    code: snapshot.code,
+    truncated: Boolean(snapshot.truncated),
+    pageText: ""
+  };
+  if (!includePageText) return target;
+
+  const pageResponse = await chrome.tabs.sendMessage(target.tabId, { type: "EXTRACT_PAGE" }, { frameId: 0 }).catch(() => null);
+  const pageTab = await chrome.tabs.get(target.tabId).catch(() => null);
+  if (pageTab?.url === target.url && pageResponse?.ok && pageResponse.page?.url === target.url) {
+    target.pageText = String(pageResponse.page.text || "");
+  }
+  return target;
+}
+
+function isHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+async function sendPageAgentTargetMessage(target, message) {
+  try {
+    return await chrome.tabs.sendMessage(target.tabId, message, { frameId: 0 });
+  } catch (error) {
+    throw new Error(`原页面不可用：${error.message}`);
+  }
+}
+
+function showTruncatedPageCodeNotice(target) {
+  if (target.truncated) addMessage("assistant", "网页代码已截断至前 24,000 个字符，回答或计划可能遗漏后续页面内容。");
+}
+
+function renderPageActionPlan(target, plan, previews) {
+  const card = document.createElement("article");
+  card.className = "message page-agent-plan";
+  const role = document.createElement("div");
+  role.className = "role";
+  role.textContent = "PAGE PLAN";
+  const content = document.createElement("div");
+  content.className = "content";
+  appendPlanText(content, "strong", `模式：${plan.mode === "immediate" ? "执行一次" : "后台任务"}`);
+  appendPlanText(content, "p", `目标：${target.title || target.url}`);
+  const previewList = document.createElement("ul");
+  for (const preview of previews.slice(0, 12)) {
+    const item = document.createElement("li");
+    item.textContent = formatPageActionPreview(preview);
+    previewList.append(item);
+  }
+  content.append(previewList);
+  const control = document.createElement("button");
+  control.type = "button";
+  control.className = "primary-button";
+  if (plan.mode === "immediate") {
+    control.textContent = "执行一次";
+    control.addEventListener("click", () => void executePageActionPlan(target, plan, control));
+  } else {
+    control.textContent = "创建后台任务";
+    control.addEventListener("click", () => openPageTaskDialog(target, plan, previews, control));
+  }
+  content.append(control);
+  card.append(role, content);
+  elements.messages.append(card);
+  scrollToBottom();
+}
+
+function appendPlanText(parent, tag, value) {
+  const element = document.createElement(tag);
+  element.textContent = value;
+  parent.append(element);
+}
+
+function formatPageActionPreview(preview) {
+  const type = shortPageAgentText(preview?.type || "操作", 80);
+  const target = shortPageAgentText(preview?.target || "页面", 180);
+  const risk = shortPageAgentText(preview?.risk || "none", 80);
+  const error = preview?.error ? `；错误：${shortPageAgentText(preview.error, 180)}` : "";
+  return `${type} · ${target} · 风险：${risk}${error}`;
+}
+
+function shortPageAgentText(value, max) {
+  return String(value || "").replace(/\s+/g, " ").slice(0, max);
+}
+
+async function executePageActionPlan(target, plan, control) {
+  if (!beginTask()) return;
+  const abortController = new AbortController();
+  state.abort = () => abortController.abort();
+  control.remove();
+  try {
+    const response = await sendPageAgentTargetMessage(target, {
+      type: "EXECUTE_PAGE_ACTIONS", url: target.url, documentToken: target.documentToken, rootId: target.rootId, mode: "immediate", actions: plan.actions
+    });
+    const results = Array.isArray(response?.results) ? response.results : [];
+    const succeeded = results.filter((item) => item?.ok).length;
+    const message = response?.ok
+      ? `页面操作已执行：${succeeded}/${results.length || plan.actions.length} 项成功。`
+      : `页面操作执行失败：${shortPageAgentText(response?.error || "当前页面已变化", 240)}`;
+    addMessage(response?.ok ? "assistant" : "error", message);
+    state.messages.push({ role: "assistant", content: message });
+    trimMessages();
+    await persist();
+  } catch (error) {
+    const message = `页面操作执行失败：${shortPageAgentText(error.message, 240)}`;
+    addMessage("error", message);
+    state.messages.push({ role: "assistant", content: message });
+    trimMessages();
+    await persist();
+  } finally {
+    endTask();
+  }
+}
+
+function openPageTaskDialog(target, plan, previews, control) {
+  state.pendingPageTaskConfirmation = { target, plan, previews, control };
+  elements.pageTaskTarget.textContent = target.title ? `${target.title} · ${target.url}` : target.url;
+  elements.pageTaskSummary.textContent = shortPageAgentText(plan.message, 500);
+  elements.pageTaskActions.textContent = plan.actions.map((action, index) => `${index + 1}. ${formatPageActionPreview(previews[index] || action)}`).join("\n");
+  elements.pageTaskEffects.textContent = "每次运行都会按上述顺序修改或检查页面；每项后的风险提示来自当前页面预览。";
+  elements.pageTaskInterval.textContent = `每 ${plan.intervalSeconds} 秒执行一次。手动停止后不会撤销已发生的页面改动。`;
+  elements.pageTaskScope.textContent = "";
+  const scopes = target.rootId ? ["document"] : ["document", "tab"];
+  for (const scope of scopes) {
+    const option = document.createElement("option");
+    option.value = scope;
+    option.textContent = scope === "document" ? "仅当前文档" : "同源标签页";
+    elements.pageTaskScope.append(option);
+  }
+  elements.pageTaskScope.value = target.rootId ? "document" : plan.scope;
+  elements.pageTaskScope.disabled = Boolean(target.rootId);
+  if (!elements.pageTaskDialog.open) elements.pageTaskDialog.showModal();
+}
+
+function closePageTaskDialog() {
+  state.pendingPageTaskConfirmation = null;
+  elements.pageTaskDialog.close();
+}
+
+async function confirmPageTask() {
+  const pending = state.pendingPageTaskConfirmation;
+  if (!pending || !beginTask()) return;
+  const scope = pending.target.rootId ? "document" : elements.pageTaskScope.value;
+  const plan = { ...pending.plan, scope };
+  try {
+    const { tabId, url, origin, title, documentToken, rootId } = pending.target;
+    const response = await chrome.runtime.sendMessage({ type: "CREATE_PAGE_TASK", target: { tabId, url, origin, title, documentToken, rootId }, plan });
+    if (!response?.ok) throw new Error(response?.error || "后台任务创建失败");
+    const message = "后台任务已启动；可在输入框上方随时停止。";
+    addMessage("assistant", message);
+    state.messages.push({ role: "assistant", content: message });
+    trimMessages();
+    await persist();
+    await renderPageTasks();
+    pending.control?.remove();
+    closePageTaskDialog();
+  } catch (error) {
+    addMessage("error", `后台任务创建失败：${shortPageAgentText(error.message, 240)}`);
+    await renderPageTasks();
+  } finally {
+    endTask();
+  }
 }
 
 async function runPageAction(actionId) {
@@ -537,7 +841,7 @@ async function askModel(newMessages) {
   }
 }
 
-async function askModelDuringTask(newMessages, signal, settings = currentRequestSettings(), { videoTimestampUrl } = {}) {
+async function askModelDuringTask(newMessages, signal, settings = currentRequestSettings(), { videoTimestampUrl, historyMessages = newMessages } = {}) {
   state.running = true;
 
   const assistantNode = addMessage("assistant", "");
@@ -562,7 +866,7 @@ async function askModelDuringTask(newMessages, signal, settings = currentRequest
     if (!fullText.trim()) throw new Error("模型返回了空内容，请检查模型兼容性，或关闭流式输出后重试。");
     if (videoTimestampUrl) fullText = linkifyVideoTimestamps(fullText, videoTimestampUrl);
     renderMarkdown(assistantNode.querySelector(".content"), fullText);
-    state.messages.push(...newMessages.map(sanitizeMessageForHistory), { role: "assistant", content: fullText });
+    state.messages.push(...historyMessages.map(sanitizeMessageForHistory), { role: "assistant", content: fullText });
     trimMessages();
     await persist();
   } catch (error) {
@@ -757,6 +1061,7 @@ async function refreshContextStatus() {
 function updateUnavailableContext(label) {
   state.context = { mode: "unavailable", label, chars: 0 };
   state.contextOptIn = false;
+  resetPageAgentOptIns();
   updateContextLabel();
 }
 
@@ -766,11 +1071,22 @@ function syncConversationContext(tab, url = tab?.url) {
   if (state.contextIdentity && state.contextIdentity !== nextIdentity) {
     state.selectedRegionPage = null;
     state.contextOptIn = false;
-    restartForContextChange();
+    resetPageAgentOptIns();
+    if (state.pageAgentRequest) {
+      state.contextRevision += 1;
+      resetConversation();
+    } else {
+      restartForContextChange();
+    }
     clearPendingScreenshot();
     addMessage("assistant", "页面已切换，已开始新会话，避免混用上一页内容。");
   }
   state.contextIdentity = nextIdentity;
+}
+
+function resetPageAgentOptIns() {
+  state.pageCodeOptIn = false;
+  state.pageActionsOptIn = false;
 }
 
 function resetConversation() {
@@ -783,15 +1099,100 @@ function resetConversation() {
 function updateContextLabel() {
   const context = state.context || { mode: "unknown", label: "", chars: 0 };
   const readable = isReadableContext();
+  const pageAgentAvailable = isPageAgentAvailable();
   if (!readable) state.contextOptIn = false;
-  elements.contextTagRow.hidden = !readable;
+  if (!pageAgentAvailable) resetPageAgentOptIns();
+  elements.contextTagRow.hidden = !readable && !pageAgentAvailable;
   elements.contextTag.setAttribute("aria-pressed", String(state.contextOptIn));
   elements.contextTag.textContent = `${state.contextOptIn ? "已附加" : "附加"}${context.mode === "selected-region" ? "选中区域" : "当前网页"}${context.title ? `：${context.title}` : ""}`;
+  elements.contextTag.disabled = state.running || !readable;
+  elements.pageCodeTag.setAttribute("aria-pressed", String(state.pageCodeOptIn));
+  elements.pageCodeTag.disabled = state.running || !pageAgentAvailable;
+  elements.pageActionTag.setAttribute("aria-pressed", String(state.pageActionsOptIn));
+  elements.pageActionTag.disabled = state.running || !pageAgentAvailable;
   elements.clearRegion.disabled = state.running || context.mode !== "selected-region";
 }
 
 function isReadableContext() {
   return Boolean(state.context?.chars && ["page", "selected-region"].includes(state.context.mode));
+}
+
+function isPageAgentAvailable() {
+  return isHttpUrl(state.context?.url);
+}
+
+async function togglePageActionsOptIn() {
+  if (state.running || !isPageAgentAvailable()) return;
+  if (!state.pageActionsOptIn) {
+    state.pageActionsOptIn = true;
+    updateContextLabel();
+    return;
+  }
+  const tab = await getActiveTab();
+  if (!tab?.id) return;
+  try {
+    const tasks = await getPageTasks();
+    const hasTasks = tasks.some((task) => task.tabId === tab.id);
+    if (hasTasks && !window.confirm("关闭页面操作权限会停止此标签页的后台任务。是否继续？")) return;
+    if (hasTasks) {
+      const response = await chrome.runtime.sendMessage({ type: "STOP_PAGE_TASKS_FOR_TAB", tabId: tab.id });
+      if (!response?.ok) throw new Error(response?.error || "停止后台任务失败");
+      await renderPageTasks();
+    }
+    state.pageActionsOptIn = false;
+    updateContextLabel();
+  } catch (error) {
+    addMessage("error", `无法关闭页面操作权限：${error.message}`);
+  }
+}
+
+async function getPageTasks() {
+  const response = await chrome.runtime.sendMessage({ type: "GET_PAGE_TASKS" });
+  if (!response?.ok || !Array.isArray(response.tasks)) throw new Error(response?.error || "无法读取后台任务");
+  state.pageTasks = response.tasks;
+  return state.pageTasks;
+}
+
+async function renderPageTasks() {
+  try {
+    await getPageTasks();
+  } catch {
+    state.pageTasks = [];
+  }
+  elements.pageTaskCount.textContent = String(state.pageTasks.length);
+  elements.pageTaskPanel.hidden = state.pageTasks.length === 0;
+  elements.pageTaskList.textContent = "";
+  for (const task of state.pageTasks) {
+    const row = document.createElement("article");
+    row.className = "page-task-row";
+    const details = document.createElement("div");
+    details.className = "page-task-details";
+    appendPlanText(details, "strong", task.title || task.url || "未命名页面");
+    appendPlanText(details, "span", `目标：${task.url || "未知页面"}`);
+    appendPlanText(details, "span", `摘要：${shortPageAgentText(task.summary || "无", 240)}`);
+    appendPlanText(details, "span", `${task.state === "active" ? "运行中" : "已暂停"} · ${task.scope === "document" ? "当前文档" : "同源标签页"}`);
+    appendPlanText(details, "span", `上次运行：${task.lastRunAt ? new Date(task.lastRunAt).toLocaleString() : "尚未运行"}`);
+    appendPlanText(details, "span", `错误：${task.lastError || "无"}`);
+    const stop = document.createElement("button");
+    stop.type = "button";
+    stop.dataset.pageTaskStop = "true";
+    stop.textContent = "停止";
+    stop.disabled = false;
+    stop.addEventListener("click", () => void stopPageTask(task.id));
+    row.append(details, stop);
+    elements.pageTaskList.append(row);
+  }
+}
+
+async function stopPageTask(taskId) {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "STOP_PAGE_TASK", taskId });
+    if (!response?.ok) throw new Error(response?.error || "停止后台任务失败");
+  } catch (error) {
+    addMessage("error", `停止后台任务失败：${error.message}`);
+  } finally {
+    await renderPageTasks();
+  }
 }
 
 async function startElementPick() {
@@ -1015,7 +1416,7 @@ function endTask() {
 
 function setControlsDisabled(disabled) {
   for (const button of document.querySelectorAll("button")) {
-    if (button === elements.stopChat || button === elements.stopTts || button === elements.openOptions) continue;
+    if (button === elements.stopChat || button === elements.stopTts || button === elements.openOptions || button.dataset.pageTaskStop === "true") continue;
     button.disabled = disabled;
   }
   elements.promptInput.disabled = disabled;

@@ -14,9 +14,18 @@
   const QUICK_RAIL_ID = "custom-ai-assistant-quick-rail";
   const FLOATING_CHAT_CLASS = "custom-ai-assistant-floating-chat";
   const SESSION_PICKER_CLASS = "custom-ai-assistant-session-picker";
+  const EXTENSION_UI_SELECTOR = `#${TOOLBAR_ID},#${SEARCH_PANEL_ID},#${DOCK_ID},#${LAUNCHER_ID},#${QUICK_RAIL_ID},.${FLOATING_CHAT_CLASS},.${SESSION_PICKER_CLASS},.custom-ai-assistant-inline-translation`;
   const DOCK_STATE_KEY = "customAiAssistantDockState";
   const FLOATING_CHAT_IDLE_MS = 5 * 60 * 1000;
   const REFRESH_PAGE_MESSAGE = "扩展已更新，请刷新页面后重试。";
+  const PAGE_CODE_MAX_CHARS = 24000;
+  const PAGE_TASK_MAX_ACTIONS = 12;
+  const PAGE_TASK_INTERVAL_MIN_SECONDS = 10;
+  const PAGE_TASK_INTERVAL_MAX_SECONDS = 3600;
+  const PAGE_TASK_ACTION_TYPES = new Set(["inspect", "click", "setValue", "setText", "setAttribute", "setStyle", "remove", "scroll"]);
+  const PAGE_TASK_STYLE_NAME = /^[a-z][a-z0-9-]{0,63}$/;
+  const PAGE_TASK_BLOCKED_STYLE_VALUE = /url\s*\(|expression\s*\(|@import|javascript\s*:|-moz-binding/i;
+  const PAGE_TASK_FIELDS = new Set(["id", "nonce", "documentToken", "rootId", "tabId", "url", "origin", "title", "summary", "scope", "intervalSeconds", "actions", "state", "createdAt", "updatedAt", "lastRunAt", "lastError"]);
   const TRANSLATABLE_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,figcaption,td,th,dd,dt,summary";
   const TRANSLATION_FALLBACK_SELECTOR = "article,section,div";
   const CONTAINER_SELECTOR = "article,main,[role='main'],section,div";
@@ -56,6 +65,8 @@
   let highlightedPickNode = null;
   let dockDragStart = null;
   const floatingCompressionTimers = new Map();
+  const pageTaskDocumentToken = crypto.randomUUID();
+  const localPageTasks = new Map();
 
   function hasExtensionContext() {
     try {
@@ -159,12 +170,537 @@
       sendResponse({ ok: true });
       return true;
     }
+    if (!isTopFrame) return false;
+    if (message?.type === "EXTRACT_PAGE_CODE") {
+      try {
+        sendResponse({ ok: true, snapshot: extractPageCodeSnapshot() });
+      } catch (error) {
+        sendResponse(pageTaskError(error));
+      }
+      return true;
+    }
+    if (message?.type === "PREVIEW_PAGE_ACTIONS") {
+      try {
+        const request = validatePageActionRequest(message, new Set(["immediate", "background"]));
+        sendResponse({ ok: true, previews: previewPageActions(request) });
+      } catch (error) {
+        sendResponse(pageTaskError(error));
+      }
+      return true;
+    }
+    if (message?.type === "EXECUTE_PAGE_ACTIONS") {
+      try {
+        const request = validatePageActionRequest(message, new Set(["immediate"]));
+        sendResponse(executePageActions(request));
+      } catch (error) {
+        sendResponse(pageTaskError(error));
+      }
+      return true;
+    }
+    if (message?.type === "VERIFY_PAGE_TASK_TARGET") {
+      sendResponse({ ok: message.documentToken === pageTaskDocumentToken && message.url === location.href });
+      return true;
+    }
+    if (message?.type === "START_PAGE_TASK") {
+      try {
+        const task = validateLocalPageTask(message.task);
+        installLocalPageTask(task);
+        sendResponse({ ok: true });
+        window.setTimeout(() => void runLocalPageTask(task.id), 0);
+      } catch (error) {
+        sendResponse(pageTaskError(error));
+      }
+      return true;
+    }
+    if (message?.type === "STOP_PAGE_TASK") {
+      stopLocalPageTask(message.taskId, message.nonce);
+      sendResponse({ ok: true });
+      return true;
+    }
     return false;
   });
 
   if (isTopFrame) {
     maybeInjectSearchPanel();
     injectFloatingLauncher();
+    window.setTimeout(announcePageTaskDocumentReady, 0);
+  }
+
+  function extractPageCodeSnapshot() {
+    const region = getSelectedRegionSnapshot();
+    const root = region ? getContextRoot() : document.documentElement;
+    if (!root) throw new TypeError("Page root is unavailable");
+    const clone = root.cloneNode(true);
+    sanitizePageCodeClone(clone);
+    const fullCode = clone.outerHTML;
+    const truncated = fullCode.length > PAGE_CODE_MAX_CHARS;
+    return {
+      title: document.title,
+      url: location.href,
+      scope: region ? "selected-region" : "page",
+      label: region?.label || "当前网页",
+      code: fullCode.slice(0, PAGE_CODE_MAX_CHARS),
+      truncated,
+      documentToken: pageTaskDocumentToken,
+      rootId: region?.id || null
+    };
+  }
+
+  function sanitizePageCodeClone(root) {
+    const nodes = [root, ...root.querySelectorAll("*")];
+    for (const node of nodes) {
+      if (isSnapshotExcludedNode(node)) node.remove();
+    }
+    for (const node of nodes) {
+      if (node !== root && !node.parentNode) continue;
+      if (node.matches("script,style")) node.textContent = "";
+      if (node.matches("textarea")) {
+        node.value = "";
+        node.textContent = "";
+      }
+      if (node.matches("input")) {
+        node.value = "";
+        node.removeAttribute("value");
+      }
+      if (node.matches("[contenteditable]")) {
+        node.textContent = "";
+        node.removeAttribute("value");
+      }
+      sanitizeSnapshotAttributes(node);
+    }
+  }
+
+  function isSnapshotExcludedNode(node) {
+    if (node.matches("template,noscript,[hidden]")) return true;
+    if (node.matches("input")) {
+      const type = String(node.getAttribute("type") || "").toLowerCase();
+      if (["hidden", "password", "file"].includes(type)) return true;
+    }
+    return isExtensionNode(node) || [TOOLBAR_ID, SEARCH_PANEL_ID, DOCK_ID, LAUNCHER_ID, QUICK_RAIL_ID].includes(node.id) || node.matches(`.${FLOATING_CHAT_CLASS},.${SESSION_PICKER_CLASS},.custom-ai-assistant-inline-translation`);
+  }
+
+  function sanitizeSnapshotAttributes(node) {
+    for (const attribute of [...node.attributes]) {
+      const name = attribute.name.toLowerCase();
+      if (name === "class") {
+        const classes = attribute.value.split(/\s+/).filter((item) => item && !item.startsWith("custom-ai-assistant-"));
+        if (classes.length) node.setAttribute("class", classes.join(" "));
+        else node.removeAttribute("class");
+        continue;
+      }
+      if (!isSafeSnapshotAttribute(name)) {
+        node.removeAttribute(attribute.name);
+        continue;
+      }
+      if (name === "href" || name === "src") {
+        const value = safeSnapshotUrl(attribute.value);
+        if (value) node.setAttribute(name, value);
+        else node.removeAttribute(attribute.name);
+      } else if (attribute.value.length > 1000) {
+        node.setAttribute(attribute.name, attribute.value.slice(0, 1000));
+      }
+    }
+  }
+
+  function isSafeSnapshotAttribute(name) {
+    return ["id", "class", "role", "name", "type", "placeholder", "title", "alt", "for", "href", "src"].includes(name) ||
+      /^aria-[a-z0-9_-]+$/.test(name) || /^data-(testid|test|role)$/.test(name);
+  }
+
+  function safeSnapshotUrl(value) {
+    try {
+      const url = new URL(value, location.href);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+      url.username = "";
+      url.password = "";
+      url.search = "";
+      url.hash = "";
+      return url.href;
+    } catch {
+      return null;
+    }
+  }
+
+  function validatePageActionRequest(message, allowedModes) {
+    rejectUnknownPageTaskFields(message, new Set(["type", "documentToken", "url", "rootId", "actions", "mode"]));
+    if (message.documentToken !== pageTaskDocumentToken || message.url !== location.href) throw new TypeError("Page document changed");
+    const mode = pageTaskEnum(message.mode, allowedModes, "mode");
+    const root = resolvePageTaskRoot(message.rootId);
+    const actions = normalizePageTaskActions(message.actions);
+    if (!actions.length) throw new TypeError("Action mode requires actions");
+    if (mode === "background") actions.forEach(assertBackgroundActionAllowed);
+    return { mode, root, actions };
+  }
+
+  function resolvePageTaskRoot(rootId) {
+    if (rootId === undefined || rootId === null) return document;
+    const id = pageTaskNonempty(rootId, "rootId", 128);
+    recoverSelectedRegion();
+    const root = findTranslationSource(id);
+    if (!root?.isConnected || root !== selectedRegion?.element || selectedRegion.id !== id || root.dataset.customAiTranslationId !== id) {
+      throw new TypeError("Selected page region changed");
+    }
+    return root;
+  }
+
+  function previewPageActions({ mode, root, actions }) {
+    return actions.map((action) => {
+      let target;
+      try {
+        target = findPageActionTarget(root, action, false);
+      } catch (error) {
+        return { type: action.type, selector: action.selector || null, target: "未找到目标", risk: "none", error: pageTaskMessage(error, 500) };
+      }
+      if (!target && !(action.type === "scroll" && action.selector === undefined)) {
+        return { type: action.type, selector: action.selector || null, target: "未找到目标", risk: "none", error: "Action target not found" };
+      }
+      if (mode === "background") assertBackgroundActionAllowed(action);
+      return {
+        type: action.type,
+        selector: action.selector || null,
+        target: target ? pageActionTargetLabel(target) : "页面",
+        risk: pageActionRisk(action, target)
+      };
+    });
+  }
+
+  function executePageActions({ mode, root, actions }) {
+    const results = [];
+    for (const [index, action] of actions.entries()) {
+      try {
+        const target = findPageActionTarget(root, action, true);
+        if (mode === "background") assertBackgroundActionAllowed(action);
+        const result = executePageAction(action, target);
+        results.push(pageActionResult(index, action, true, result));
+      } catch (error) {
+        const message = pageTaskMessage(error, 500);
+        results.push(pageActionResult(index, action, false, { error: message }));
+        return { ok: false, error: message, results };
+      }
+    }
+    return { ok: true, results };
+  }
+
+  function findPageActionTarget(root, action, required) {
+    if (action.type === "scroll" && action.selector === undefined) return null;
+    if (root !== document && !root.isConnected) throw new TypeError("Page root is unavailable");
+    let target;
+    try {
+      target = root === document ? document.querySelector(action.selector) : (root.matches(action.selector) ? root : root.querySelector(action.selector));
+    } catch {
+      throw new TypeError("Invalid action selector");
+    }
+    if (!target && required) throw new TypeError("Action target not found");
+    if (target && (target === document.documentElement || target === document.body || isExtensionNode(target) || target.querySelector(EXTENSION_UI_SELECTOR) || target.matches("script,style,template,noscript"))) throw new TypeError("Unsafe action target");
+    return target;
+  }
+
+  function executePageAction(action, target) {
+    if (action.type === "inspect") {
+      return action.property === "text"
+        ? { text: normalizeText(target.innerText || target.textContent || "").slice(0, 2000) }
+        : { attributes: safePageActionAttributes(target) };
+    }
+    if (action.type === "click") {
+      target.click();
+      return { target: pageActionTargetLabel(target) };
+    }
+    if (action.type === "setValue") {
+      if (!isPageTaskValueTarget(target)) throw new TypeError("setValue requires a non-sensitive editable target");
+      if (target.isContentEditable) target.textContent = action.value;
+      else target.value = action.value;
+      dispatchPageTaskInputEvents(target);
+      return { target: pageActionTargetLabel(target) };
+    }
+    if (action.type === "setText") {
+      target.textContent = action.value;
+      return { target: pageActionTargetLabel(target) };
+    }
+    if (action.type === "setAttribute") {
+      target.setAttribute(action.name, action.value);
+      return { target: pageActionTargetLabel(target), name: action.name };
+    }
+    if (action.type === "setStyle") {
+      for (const [name, value] of Object.entries(action.styles)) target.style.setProperty(name, value);
+      return { target: pageActionTargetLabel(target), styles: Object.keys(action.styles) };
+    }
+    if (action.type === "remove") {
+      target.remove();
+      return { target: pageActionTargetLabel(target) };
+    }
+    if (target) target.scrollIntoView({ behavior: action.behavior, block: "nearest" });
+    else window.scrollBy({ top: action.amount, behavior: action.behavior });
+    return { target: target ? pageActionTargetLabel(target) : "页面" };
+  }
+
+  function isPageTaskValueTarget(target) {
+    if (target.isContentEditable || target.matches("textarea")) return true;
+    if (!target.matches("input")) return false;
+    return !["password", "file", "hidden"].includes(String(target.type || "").toLowerCase());
+  }
+
+  function dispatchPageTaskInputEvents(target) {
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    target.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function safePageActionAttributes(target) {
+    const attributes = {};
+    for (const attribute of [...target.attributes]) {
+      const name = attribute.name.toLowerCase();
+      if (!isSafeSnapshotAttribute(name) || Object.keys(attributes).length >= 12) continue;
+      if (name === "href" || name === "src") {
+        const value = safeSnapshotUrl(attribute.value);
+        if (value) attributes[name] = value;
+      } else if (name === "class") {
+        attributes[name] = attribute.value.split(/\s+/).filter((item) => item && !item.startsWith("custom-ai-assistant-")).join(" ").slice(0, 240);
+      } else {
+        attributes[name] = attribute.value.slice(0, 240);
+      }
+    }
+    return attributes;
+  }
+
+  function assertBackgroundActionAllowed(action) {
+    if (action.type === "click" || action.type === "setValue") throw new TypeError("Background tasks cannot click or set values");
+  }
+
+  function pageActionRisk(action, target) {
+    if (action.type !== "click" || !target) return "none";
+    if (target.closest("a[href]")) return "navigation";
+    if (isPageTaskSubmitControl(target)) return "form";
+    return "none";
+  }
+
+  function isPageTaskSubmitControl(target) {
+    const button = target.closest("button");
+    if (button?.form && button.type === "submit") return true;
+    const input = target.closest("input");
+    return ["submit", "image"].includes(String(input?.type || "").toLowerCase());
+  }
+
+  function pageActionTargetLabel(target) {
+    const tag = target.tagName.toLowerCase();
+    const id = target.id ? `#${target.id}` : "";
+    const name = target.getAttribute("name") ? `[name=${target.getAttribute("name")}]` : "";
+    const text = normalizeText(target.getAttribute("aria-label") || target.getAttribute("title") || target.innerText || target.textContent || "").slice(0, 100);
+    return `${tag}${id}${name}${text ? ` · ${text}` : ""}`.slice(0, 220);
+  }
+
+  function pageActionResult(index, action, ok, result) {
+    const item = { index, type: action.type, ok, result };
+    return JSON.stringify(item).length <= 4000 ? item : { index, type: action.type, ok, result: { summary: "Result truncated" } };
+  }
+
+  function normalizePageTaskActions(actions) {
+    if (!Array.isArray(actions) || actions.length > PAGE_TASK_MAX_ACTIONS) throw new TypeError("Actions must contain at most 12 entries");
+    return actions.map(normalizePageTaskAction);
+  }
+
+  function normalizePageTaskAction(action) {
+    if (!pageTaskPlainObject(action)) throw new TypeError("Action must be an object");
+    const type = pageTaskEnum(action.type, PAGE_TASK_ACTION_TYPES, "action type");
+    const fields = {
+      inspect: ["type", "selector", "property"], click: ["type", "selector"], setValue: ["type", "selector", "value"], setText: ["type", "selector", "value"],
+      setAttribute: ["type", "selector", "name", "value"], setStyle: ["type", "selector", "styles"], remove: ["type", "selector"], scroll: ["type", "selector", "amount", "behavior"]
+    }[type];
+    rejectUnknownPageTaskFields(action, new Set(fields));
+    const selector = type === "scroll" && action.selector === undefined ? undefined : pageTaskNonempty(action.selector, "selector", 500);
+    if (type === "inspect") return { type, selector, property: pageTaskEnum(action.property, new Set(["text", "attributes"]), "property") };
+    if (type === "click" || type === "remove") return { type, selector };
+    if (type === "setValue" || type === "setText") return { type, selector, value: pageTaskString(action.value, "value", 4000) };
+    if (type === "setAttribute") return { type, selector, name: pageTaskAttributeName(action.name), value: pageTaskString(action.value, "value", 1000) };
+    if (type === "setStyle") return { type, selector, styles: pageTaskStyles(action.styles) };
+    return { type, ...(selector === undefined ? {} : { selector }), amount: pageTaskInteger(action.amount, "amount", -100000, 100000), behavior: action.behavior === undefined ? "auto" : pageTaskEnum(action.behavior, new Set(["auto", "smooth"]), "behavior") };
+  }
+
+  function pageTaskStyles(styles) {
+    if (!pageTaskPlainObject(styles) || Object.keys(styles).length > 12) throw new TypeError("Styles must be an object with at most 12 entries");
+    const result = {};
+    for (const [name, value] of Object.entries(styles)) {
+      if (!PAGE_TASK_STYLE_NAME.test(name) || name.startsWith("--")) throw new TypeError("Invalid style name");
+      const text = pageTaskString(value, "style value", 500);
+      if (PAGE_TASK_BLOCKED_STYLE_VALUE.test(text)) throw new TypeError("Unsafe style value");
+      result[name] = text;
+    }
+    return result;
+  }
+
+  function pageTaskAttributeName(name) {
+    if (typeof name !== "string" || !/^(title|class|hidden|aria-[a-z0-9_-]+|data-[a-z0-9_-]+)$/.test(name)) throw new TypeError("Unsafe attribute name");
+    return name;
+  }
+
+  function validateLocalPageTask(task) {
+    rejectUnknownPageTaskFields(task, PAGE_TASK_FIELDS);
+    const location = normalizePageTaskLocation(task);
+    const normalized = {
+      id: pageTaskNonempty(task.id, "task id", 128),
+      nonce: pageTaskNonempty(task.nonce, "task nonce", 128),
+      documentToken: pageTaskNonempty(task.documentToken, "documentToken", 128),
+      rootId: task.rootId === null ? null : pageTaskNonempty(task.rootId, "rootId", 128),
+      tabId: location.tabId,
+      url: location.url,
+      origin: location.origin,
+      title: pageTaskString(task.title, "title", 300),
+      summary: pageTaskString(task.summary, "summary", 500),
+      scope: pageTaskEnum(task.scope, new Set(["document", "tab"]), "scope"),
+      intervalSeconds: pageTaskInteger(task.intervalSeconds, "intervalSeconds", PAGE_TASK_INTERVAL_MIN_SECONDS, PAGE_TASK_INTERVAL_MAX_SECONDS),
+      actions: normalizePageTaskActions(task.actions),
+      state: pageTaskEnum(task.state, new Set(["active", "paused"]), "state"),
+      createdAt: pageTaskTimestamp(task.createdAt, "createdAt"),
+      updatedAt: pageTaskTimestamp(task.updatedAt, "updatedAt"),
+      lastRunAt: pageTaskTimestamp(task.lastRunAt, "lastRunAt"),
+      lastError: pageTaskNullableString(task.lastError, "lastError", 500)
+    };
+    if (!normalized.actions.length) throw new TypeError("Background task requires actions");
+    normalized.actions.forEach(assertBackgroundActionAllowed);
+    if (normalized.documentToken !== pageTaskDocumentToken) throw new TypeError("Page document changed");
+    if (normalized.state !== "active") throw new TypeError("Page task is not active");
+    if (normalized.scope === "tab" && normalized.rootId !== null) throw new TypeError("Tab-scoped tasks cannot target a selected region");
+    resolvePageTaskRoot(normalized.rootId);
+    return normalized;
+  }
+
+  function normalizePageTaskLocation(task) {
+    const tabId = pageTaskInteger(task.tabId, "tabId", 1, Number.MAX_SAFE_INTEGER);
+    try {
+      const url = new URL(task.url);
+      if ((url.protocol !== "http:" && url.protocol !== "https:") || url.origin !== task.origin || url.origin !== location.origin || url.href !== location.href) throw new TypeError();
+      return { tabId, url: url.href, origin: url.origin };
+    } catch {
+      throw new TypeError("Page task target changed");
+    }
+  }
+
+  function installLocalPageTask(task) {
+    const previous = localPageTasks.get(task.id);
+    if (previous) window.clearTimeout(previous.timer);
+    localPageTasks.set(task.id, { task, timer: null, running: false });
+  }
+
+  function stopLocalPageTask(taskId, nonce) {
+    const runner = localPageTasks.get(taskId);
+    if (!runner || runner.task.nonce !== nonce) return;
+    window.clearTimeout(runner.timer);
+    localPageTasks.delete(taskId);
+  }
+
+  function scheduleLocalPageTask(runner, delay) {
+    window.clearTimeout(runner.timer);
+    runner.timer = window.setTimeout(() => void runLocalPageTask(runner.task.id), delay);
+  }
+
+  async function runLocalPageTask(taskId) {
+    const runner = localPageTasks.get(taskId);
+    if (!runner || runner.running) return;
+    runner.running = true;
+    let keepRunning = true;
+    try {
+      const tick = await sendRuntimeMessage({
+        type: "PAGE_TASK_TICK",
+        taskId: runner.task.id,
+        nonce: runner.task.nonce,
+        documentToken: pageTaskDocumentToken
+      }, { ok: false, error: REFRESH_PAGE_MESSAGE });
+      if (!tick?.ok || !tick.task) {
+        keepRunning = false;
+        return;
+      }
+      const task = validateLocalPageTask(tick.task);
+      if (task.id !== runner.task.id || task.nonce !== runner.task.nonce || task.documentToken !== pageTaskDocumentToken) {
+        keepRunning = false;
+        return;
+      }
+      runner.task = task;
+      const outcome = executePageActions({ mode: "background", root: resolvePageTaskRoot(task.rootId), actions: task.actions });
+      const reported = await sendRuntimeMessage({
+        type: "PAGE_TASK_RESULT",
+        taskId: task.id,
+        nonce: task.nonce,
+        documentToken: pageTaskDocumentToken,
+        error: outcome.ok ? null : pageTaskMessage(outcome.error, 500)
+      }, { ok: false, error: REFRESH_PAGE_MESSAGE });
+      if (!reported?.ok) keepRunning = false;
+    } catch (error) {
+      const reported = await sendRuntimeMessage({
+        type: "PAGE_TASK_RESULT",
+        taskId: runner.task.id,
+        nonce: runner.task.nonce,
+        documentToken: pageTaskDocumentToken,
+        error: pageTaskMessage(error, 500)
+      }, { ok: false, error: REFRESH_PAGE_MESSAGE });
+      if (!reported?.ok) keepRunning = false;
+    } finally {
+      runner.running = false;
+      if (keepRunning && localPageTasks.get(taskId) === runner) {
+        scheduleLocalPageTask(runner, runner.task.intervalSeconds * 1000);
+      } else if (localPageTasks.get(taskId) === runner) {
+        stopLocalPageTask(taskId, runner.task.nonce);
+      }
+    }
+  }
+
+  async function announcePageTaskDocumentReady() {
+    const response = await sendRuntimeMessage({ type: "PAGE_TASK_DOCUMENT_READY", documentToken: pageTaskDocumentToken }, { ok: false });
+    if (!response?.ok || !Array.isArray(response.tasks)) return;
+    for (const task of response.tasks) {
+      try {
+        const normalized = validateLocalPageTask(task);
+        if (normalized.state === "active") {
+          installLocalPageTask(normalized);
+          window.setTimeout(() => void runLocalPageTask(normalized.id), 0);
+        }
+      } catch {}
+    }
+  }
+
+  function pageTaskPlainObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+  }
+
+  function rejectUnknownPageTaskFields(value, allowed) {
+    if (!pageTaskPlainObject(value)) throw new TypeError("Value must be an object");
+    for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`Unknown field: ${key}`);
+  }
+
+  function pageTaskEnum(value, allowed, name) {
+    if (!allowed.has(value)) throw new TypeError(`Invalid ${name}`);
+    return value;
+  }
+
+  function pageTaskInteger(value, name, min, max) {
+    if (!Number.isInteger(value) || value < min || value > max) throw new TypeError(`${name} is out of range`);
+    return value;
+  }
+
+  function pageTaskString(value, name, max) {
+    if (typeof value !== "string" || value.length > max) throw new TypeError(`${name} must be a string up to ${max} characters`);
+    return value;
+  }
+
+  function pageTaskNonempty(value, name, max) {
+    const text = pageTaskString(value, name, max);
+    if (!text.length) throw new TypeError(`${name} cannot be empty`);
+    return text;
+  }
+
+  function pageTaskNullableString(value, name, max) {
+    return value === null ? null : pageTaskString(value, name, max);
+  }
+
+  function pageTaskTimestamp(value, name) {
+    if (value === null) return null;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new TypeError(`${name} must be a non-negative finite number or null`);
+    return value;
+  }
+
+  function pageTaskError(error) {
+    return { ok: false, error: pageTaskMessage(error, 500) };
+  }
+
+  function pageTaskMessage(error, max) {
+    return String(error?.message || error || "Page task failed").slice(0, max);
   }
 
   function extractPage(recipeSelectors = []) {
@@ -757,6 +1293,16 @@
       </form>
     `;
 
+    const form = dialog.querySelector("form");
+    const input = dialog.querySelector("textarea");
+    let composing = false;
+    input.addEventListener("compositionstart", () => { composing = true; });
+    input.addEventListener("compositionend", () => { composing = false; });
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.shiftKey || composing || event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      form.requestSubmit();
+    });
     dialog.querySelector("[data-floating-control='close']").addEventListener("click", () => dialog.remove());
     dialog.querySelector("[data-floating-control='minimize']").addEventListener("click", () => {
       dialog.classList.toggle("is-minimized");
@@ -765,9 +1311,8 @@
       const rect = dialog.getBoundingClientRect();
       openFloatingChat(source, rect);
     });
-    dialog.querySelector("form").addEventListener("submit", async (event) => {
+    form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const input = dialog.querySelector("textarea");
       const prompt = input.value.trim();
       if (!prompt) return;
       input.value = "";
@@ -1240,7 +1785,7 @@
   }
 
   function isExtensionNode(node) {
-    return Boolean(node?.closest?.(`#${TOOLBAR_ID},#${SEARCH_PANEL_ID},#${DOCK_ID},#${LAUNCHER_ID},#${QUICK_RAIL_ID},.${FLOATING_CHAT_CLASS},.${SESSION_PICKER_CLASS},.custom-ai-assistant-inline-translation`));
+    return Boolean(node?.closest?.(EXTENSION_UI_SELECTOR));
   }
 
   function isVisible(node) {
