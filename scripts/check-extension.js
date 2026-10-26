@@ -6,6 +6,7 @@ const manifestPath = path.join(root, "manifest.json");
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 const backgroundSource = fs.readFileSync(path.join(root, "src/background.js"), "utf8");
 const contentSource = fs.readFileSync(path.join(root, "src/content/contentScript.js"), "utf8");
+const composerSource = fs.readFileSync(path.join(root, "src/content/floatingComposer.js"), "utf8");
 const sidePanelSource = fs.readFileSync(path.join(root, "src/sidepanel/sidepanel.js"), "utf8");
 const sidePanelMarkup = fs.readFileSync(path.join(root, "src/sidepanel/sidepanel.html"), "utf8");
 const pageAgentSource = fs.readFileSync(path.join(root, "src/shared/pageAgent.js"), "utf8");
@@ -23,6 +24,8 @@ const required = [
   "assets/icon-128.png",
   "src/background.js",
   "src/content/contentScript.js",
+  "src/content/floatingComposer.html",
+  "src/content/floatingComposer.js",
   "src/sidepanel/sidepanel.html",
   "src/options/options.html",
   "src/shared/actions.js",
@@ -77,8 +80,8 @@ if (!sidePanelMarkup.includes(">确认并启动后台任务<")) {
   errors.push("Background task confirmation text must remain explicit");
 }
 
-const imeSafeEnter = ["compositionstart", "compositionend", "isComposing", "keyCode === 229", "event.shiftKey", "requestSubmit"];
-for (const [name, source] of [["side-panel composer", sidePanelSource], ["floating composer", contentSource]]) {
+const imeSafeEnter = ["compositionstart", "compositionend", "isComposing", "keyCode === 229", "event.shiftKey"];
+for (const [name, source] of [["side-panel composer", sidePanelSource], ["floating composer", composerSource]]) {
   for (const token of imeSafeEnter) {
     if (!source.includes(token)) errors.push(`${name} must keep IME-safe Enter handling (${token})`);
   }

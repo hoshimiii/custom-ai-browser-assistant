@@ -1,6 +1,7 @@
 import { DEFAULT_SETTINGS } from "./defaults.js";
 import { normalizeModelSettings } from "./modelInstances.js";
 import { mergePageRecipes } from "./pageRecipes.js";
+import { sameCredentialEndpoint } from "./apiClient.js";
 
 export const BACKUP_VERSION = 1;
 
@@ -65,14 +66,13 @@ function mergeSettings(current, incoming, incomingIsLegacy) {
     return normalizeModelSettings({
       ...currentSettings,
       ...incomingSettings,
-      apiKey: defaultInstance.apiKey,
-      ttsApiKey: incomingSettings.ttsApiKey || currentSettings.ttsApiKey,
+      ttsApiKey: mergeTtsKey(currentSettings, incomingSettings),
       localAsrToken: incomingSettings.localAsrToken || currentSettings.localAsrToken,
       modelInstances: currentSettings.modelInstances.map((item) => item.id === defaultInstance.id ? {
         ...item,
         ...legacyInstance,
         id: item.id,
-        apiKey: legacyInstance.apiKey || item.apiKey
+        apiKey: mergeModelKey(item, legacyInstance)
       } : item),
       defaultModelInstanceId: currentSettings.defaultModelInstanceId
     });
@@ -82,7 +82,7 @@ function mergeSettings(current, incoming, incomingIsLegacy) {
   const modelInstances = [
     ...incomingSettings.modelInstances.map((instance) => ({
       ...instance,
-      apiKey: instance.apiKey || currentById.get(instance.id)?.apiKey || ""
+      apiKey: mergeModelKey(currentById.get(instance.id), instance)
     })),
     ...currentSettings.modelInstances.filter((instance) => !incomingIds.has(instance.id))
   ];
@@ -92,11 +92,19 @@ function mergeSettings(current, incoming, incomingIsLegacy) {
   return normalizeModelSettings({
     ...currentSettings,
     ...incomingSettings,
-    ttsApiKey: incomingSettings.ttsApiKey || currentSettings.ttsApiKey,
+    ttsApiKey: mergeTtsKey(currentSettings, incomingSettings),
     localAsrToken: incomingSettings.localAsrToken || currentSettings.localAsrToken,
     modelInstances,
     defaultModelInstanceId
   });
+}
+
+function mergeModelKey(current, incoming) {
+  return incoming.apiKey || (current && sameCredentialEndpoint(current.baseUrl, incoming.baseUrl) ? current.apiKey : "") || "";
+}
+
+function mergeTtsKey(current, incoming) {
+  return incoming.ttsApiKey || (sameCredentialEndpoint(current.ttsBaseUrl || current.baseUrl, incoming.ttsBaseUrl || incoming.baseUrl) ? current.ttsApiKey : "") || "";
 }
 
 function mergeById(current, incoming) {

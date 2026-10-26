@@ -1,4 +1,4 @@
-import { ApiError, normalizeBaseUrl, validateBaseUrlPolicy } from "./apiClient.js";
+import { ApiError, normalizeBaseUrl, sameCredentialEndpoint, validateBaseUrlPolicy } from "./apiClient.js";
 import { splitTextIntoChunks } from "./chunking.js";
 import { DEFAULT_SETTINGS } from "./defaults.js";
 
@@ -9,7 +9,7 @@ export function resolveTtsSettings(settings = {}) {
   const merged = { ...DEFAULT_SETTINGS, ...settings };
   return {
     baseUrl: normalizeBaseUrl(merged.ttsBaseUrl || merged.baseUrl),
-    apiKey: String(merged.ttsApiKey || merged.apiKey || "").trim(),
+    apiKey: String(merged.ttsApiKey || (sameCredentialEndpoint(merged.ttsBaseUrl || merged.baseUrl, merged.baseUrl) ? merged.apiKey : "") || "").trim(),
     model: String(merged.ttsModel || "").trim(),
     voice: String(merged.ttsVoice || "").trim(),
     speed: Number(merged.ttsSpeed),
