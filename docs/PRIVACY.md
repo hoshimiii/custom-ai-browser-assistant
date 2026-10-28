@@ -26,7 +26,9 @@ Depending on the user action, the request may include:
 - On the first user-triggered page-grounded operation for an origin, page type, and operation without a usable local recipe, bounded local candidate labels and previews for that action. The selected configured model receives one non-streaming planning request and can return only candidate IDs.
 - A bounded sanitized DOM snapshot only when the user explicitly attaches `网页代码` or asks for allowed page operations. It excludes sensitive form values and inline script/style bodies; the configured model receives it only for that explicit question or operation request.
 
-No page content is sent automatically on page load. User action is required. Side-panel questions can include current-page, selected-region, selected-text, or explicit screenshot context; floating-chat questions can include current-page or selected-text context. TTS text is sent only when the user clicks the read control, and only to the configured TTS endpoint. Blank TTS URL and key inherit the selected chat instance for that request.
+No page content is sent automatically on page load. User action is required. Side-panel questions can include current-page, selected-region, selected-text, or explicit screenshot context; floating-chat questions can include current-page or selected-text context. TTS text is sent only when the user clicks the read control, and only to the configured TTS endpoint. A blank TTS URL inherits the selected chat endpoint. A blank TTS key inherits the chat key only when the normalized endpoints match, including path and query; a separate TTS endpoint requires its own key.
+
+The floating-chat composer runs in an extension-origin frame. Each send requires a trusted user action inside that frame; page-script submit events and messages cannot authorize a request. The surrounding floating conversation remains in page DOM, so the host page can read displayed messages, answers, and session previews. Use the side panel when that page access is unsuitable.
 
 ## Local Storage
 
@@ -40,6 +42,8 @@ The extension stores the following data in `chrome.storage.local`:
 - Page recipes keyed by origin, page type, and operation. A recipe contains only locally validated selector signatures and timestamps; it does not contain page text, DOM snapshots, raw planner output, or model-authored selectors.
 
 Users can export or import this data from the options page. Backups include model instances and page recipes, but do not include any API keys or loopback-helper token by default; exporting those values requires the explicit include-keys opt-in. Generated TTS audio and its source text are ephemeral: they are not stored in conversation history or backups. Users can also clear stored conversation history and delete saved pages from the side panel.
+
+Merge import retains a stored chat or TTS key only for the same normalized effective endpoint. A matching model-instance ID alone does not authorize key reuse at a changed URL. Explicit keys in a backup apply to the imported endpoints; replace import does not inherit stored keys. The loopback-helper token still targets the fixed local helper.
 
 Confirmed background page-task definitions use `chrome.storage.session`, not `chrome.storage.local`, and are never included in backups. They disappear when Chrome restarts. Page writes from a confirmed plan occur only in the pinned target page; the feature has no arbitrary JavaScript execution, `chrome.debugger`, cookie access, or browser credential access.
 

@@ -13,6 +13,19 @@ export function normalizeBaseUrl(baseUrl) {
   return String(baseUrl || "").trim().replace(/\/+$/, "");
 }
 
+export function sameCredentialEndpoint(left, right) {
+  const first = normalizeBaseUrl(left);
+  const second = normalizeBaseUrl(right);
+  if (!first || !second) return first === second;
+  try {
+    const a = new URL(first);
+    const b = new URL(second);
+    return ["http:", "https:"].includes(a.protocol) && a.href === b.href;
+  } catch {
+    return false;
+  }
+}
+
 export function buildChatCompletionsUrl(baseUrl) {
   const normalized = normalizeBaseUrl(baseUrl);
   if (!normalized) {

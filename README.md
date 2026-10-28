@@ -33,7 +33,7 @@ It does not depend on Monica, does not bypass any third-party paid feature, and 
 - PDF page detection with graceful fallback text handling.
 - Screenshot Q&A with automatic visible-tab capture and side panel preview for vision-capable OpenAI-compatible models.
 - Screenshot Q&A can also start directly from the in-page quick rail and opens near the trigger position.
-- Screenshot paths are blocked for an instance without explicit vision capability. TTS remains global, and blank TTS URL/key inherit the selected chat instance.
+- Screenshot paths are blocked for an instance without explicit vision capability. TTS remains global. A blank TTS URL inherits the selected chat endpoint; a blank TTS key inherits the chat key only when both endpoints match.
 - The side-panel `网页代码` tag explicitly attaches a bounded sanitized DOM snapshot for questions. `允许页面操作` asks the model for fixed structured operations, never arbitrary JavaScript; foreground actions require a visible confirmation, while background tasks require a second confirmation and always provide a manual Stop control.
 - Page-operation tasks stay pinned to their original tab and document. Same-origin tab tasks may resume after navigation during the current browser session; cross-origin changes pause them, and browser restarts clear them. Task definitions are session-only and are not included in backups.
 - Side-panel and floating chat send with Enter and add a newline with Shift+Enter; Chinese, Japanese, and Korean IME composition Enter keys are not sent.
@@ -64,6 +64,10 @@ The zip is written to `releases/custom-ai-browser-assistant.zip`.
 
 Backup data from the options page before moving browsers or machines. The JSON export includes settings, model instances, page recipes, history, saved pages, and floating page chat sessions. API keys remain redacted unless you explicitly opt in to include them.
 
+Merge import preserves a redacted key only when its endpoint matches the stored endpoint, including the URL path and query. Importing a changed endpoint requires its own key. This also applies to legacy backups and the effective TTS endpoint; replace import never inherits stored keys.
+
+Floating chat uses an extension-origin input frame and requires a trusted user send action for each message. The host page can still read messages and answers displayed in the surrounding floating conversation; use the side panel for conversations that must stay outside page DOM.
+
 Default shortcuts:
 
 ```text
@@ -89,7 +93,7 @@ The API must support the OpenAI-compatible chat completions endpoint:
 POST /chat/completions
 ```
 
-For page reading, configure global TTS in the options page. It uses the OpenAI-compatible endpoint below; blank TTS URL and key inherit the selected chat instance. Select a page region first when only part of a page should be read.
+For page reading, configure global TTS in the options page. It uses the OpenAI-compatible endpoint below. A blank TTS URL inherits the selected chat endpoint; a blank TTS key inherits the chat key only when the endpoints match. A separate TTS endpoint requires a TTS key. Select a page region first when only part of a page should be read.
 
 ```http
 POST /audio/speech

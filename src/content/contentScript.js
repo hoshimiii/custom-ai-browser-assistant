@@ -65,6 +65,7 @@
   let highlightedPickNode = null;
   let dockDragStart = null;
   const floatingCompressionTimers = new Map();
+  const floatingComposers = new WeakMap();
   const pageTaskDocumentToken = crypto.randomUUID();
   const localPageTasks = new Map();
 
@@ -1219,14 +1220,16 @@
       button.type = "button";
       button.dataset.sessionId = session.id;
       button.textContent = `${session.title || "浮窗会话"} · ${new Date(session.updatedAt || session.createdAt || Date.now()).toLocaleString()}`;
-      button.addEventListener("click", async () => {
+      button.addEventListener("click", async (event) => {
+        if (!event.isTrusted) return;
         picker.remove();
         await openFloatingChat(session.source || buildPageFloatingSource(), anchorRect, session, placement);
       });
       list.append(button);
     }
     picker.querySelector("[data-picker-action='close']").addEventListener("click", () => picker.remove());
-    picker.querySelector("[data-picker-action='new']").addEventListener("click", async () => {
+    picker.querySelector("[data-picker-action='new']").addEventListener("click", async (event) => {
+      if (!event.isTrusted) return;
       picker.remove();
       await openFloatingChat(buildPageFloatingSource(), anchorRect, null, placement);
     });
@@ -1257,7 +1260,7 @@
       renderFloatingSessionMessages(dialog, start.session);
     }
     scheduleFloatingCompression(start.session.id);
-    dialog.querySelector("textarea").focus();
+    floatingComposers.get(dialog)?.frame.contentWindow?.postMessage({ type: "CAA_FLOATING_COMPOSER_FOCUS" }, floatingComposers.get(dialog).origin);
   }
 
   function buildPageFloatingSource() {
@@ -1287,42 +1290,49 @@
       </header>
       <div class="caa-floating-chat-source">${buildFloatingSourcePreview(source)}</div>
       <div class="caa-floating-chat-messages" role="log" aria-live="polite"></div>
-      <form class="caa-floating-chat-form">
-        <textarea rows="2" placeholder="基于这个选区、截图或网页继续提问"></textarea>
-        <button type="submit">发送</button>
-      </form>
+      <iframe class="caa-floating-chat-composer" title="浮窗消息输入"></iframe>
     `;
 
-    const form = dialog.querySelector("form");
-    const input = dialog.querySelector("textarea");
-    let composing = false;
-    input.addEventListener("compositionstart", () => { composing = true; });
-    input.addEventListener("compositionend", () => { composing = false; });
-    input.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" || event.shiftKey || composing || event.isComposing || event.keyCode === 229) return;
-      event.preventDefault();
-      form.requestSubmit();
+    const frame = dialog.querySelector("iframe");
+    const composerUrl = chrome.runtime.getURL("src/content/floatingComposer.html");
+    const composer = { frame, origin: chrome.runtime.getURL("").replace(/\/$/, ""), sessionId: session?.id || "", busy: false };
+    floatingComposers.set(dialog, composer);
+    const onComposerMessage = async (event) => {
+      if (!dialog.isConnected || !frame.isConnected || frame.parentNode !== dialog) {
+        window.removeEventListener("message", onComposerMessage);
+        return;
+      }
+      if (!event.isTrusted || event.origin !== composer.origin || event.source !== frame.contentWindow) return;
+      if (event.data?.type === "CAA_FLOATING_COMPOSER_READY") {
+        setFloatingChatBusy(dialog, composer.busy);
+        frame.contentWindow.postMessage({ type: "CAA_FLOATING_COMPOSER_FOCUS" }, composer.origin);
+        return;
+      }
+      if (event.data?.type !== "CAA_FLOATING_COMPOSER_SEND" || composer.busy || typeof event.data.prompt !== "string") return;
+      const prompt = event.data.prompt.trim();
+      if (!prompt) return;
+      await sendFloatingChatPrompt(dialog, source, prompt);
+    };
+    window.addEventListener("message", onComposerMessage);
+    frame.src = composerUrl;
+    dialog.querySelector("[data-floating-control='close']").addEventListener("click", () => {
+      window.removeEventListener("message", onComposerMessage);
+      dialog.remove();
     });
-    dialog.querySelector("[data-floating-control='close']").addEventListener("click", () => dialog.remove());
     dialog.querySelector("[data-floating-control='minimize']").addEventListener("click", () => {
       dialog.classList.toggle("is-minimized");
     });
-    dialog.querySelector("[data-floating-control='new']").addEventListener("click", () => {
+    dialog.querySelector("[data-floating-control='new']").addEventListener("click", (event) => {
+      if (!event.isTrusted) return;
       const rect = dialog.getBoundingClientRect();
       openFloatingChat(source, rect);
-    });
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const prompt = input.value.trim();
-      if (!prompt) return;
-      input.value = "";
-      await sendFloatingChatPrompt(dialog, source, prompt);
     });
     return dialog;
   }
 
   async function sendFloatingChatPrompt(dialog, source, prompt, selectionAction = "") {
-    const sessionId = dialog.dataset.sessionId;
+    const composer = floatingComposers.get(dialog);
+    const sessionId = composer?.sessionId;
     if (!sessionId) {
       addFloatingChatMessage(dialog, "error", "浮窗会话尚未初始化。");
       return;
@@ -1345,7 +1355,8 @@
       }
       pending.querySelector(".caa-floating-chat-bubble").textContent = response.answer || "(无内容)";
       dialog.dataset.sessionId = response.session?.id || sessionId;
-      scheduleFloatingCompression(dialog.dataset.sessionId);
+      composer.sessionId = response.session?.id || sessionId;
+      scheduleFloatingCompression(composer.sessionId);
     } catch (error) {
       pending.classList.add("error");
       pending.querySelector(".caa-floating-chat-role").textContent = "ERROR";
@@ -1384,8 +1395,10 @@
   }
 
   function setFloatingChatBusy(dialog, busy) {
-    dialog.querySelector("textarea").disabled = busy;
-    dialog.querySelector("button[type='submit']").disabled = busy;
+    const composer = floatingComposers.get(dialog);
+    if (!composer) return;
+    composer.busy = busy;
+    composer.frame.contentWindow?.postMessage({ type: "CAA_FLOATING_COMPOSER_BUSY", busy }, composer.origin);
   }
 
   function scheduleFloatingCompression(sessionId) {
